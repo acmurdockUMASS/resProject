@@ -18,6 +18,64 @@ class LLMEditProposal(BaseModel):
     needs_confirmation: bool = True
 
 
+def _build_parse_prompt(raw_text: str, seed_resume: Dict[str, Any]) -> str:
+        """
+        Gemini should extract resume content into the Resume JSON schema.
+        It must return ONLY JSON matching the Resume schema below.
+        """
+        return f"""
+Return ONLY valid JSON. No markdown. No commentary.
+
+You will be given a SEED_RESUME_JSON already extracted from the resume.
+Your job is to PRESERVE all existing data in SEED_RESUME_JSON and fill missing fields
+by extracting from RAW_RESUME_TEXT. Do NOT remove or overwrite existing non-empty values
+unless the raw text explicitly corrects them.
+
+Map any extra resume information into the closest matching field so the final output
+matches this JSON schema:
+{{
+    "header": {{
+        "name": "",
+        "email": "",
+        "phone": "",
+        "linkedin": "",
+        "github": "",
+        "portfolio": "",
+        "location": ""
+    }},
+    "education": [
+        {{"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}}
+    ],
+    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": []}},
+    "experience": [
+        {{"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}}
+    ],
+    "projects": [
+        {{"name": "", "link": "", "stack": [], "start": "", "end": "", "bullets": []}}
+    ],
+    "leadership": [
+        {{"org": "", "title": "", "start": "", "end": "", "bullets": []}}
+    ],
+    "awards": []
+}}
+
+Rules:
+- Do NOT invent employers, schools, titles, dates, locations, metrics, links, or awards.
+- If a field is missing in the resume, use "" or [] as appropriate.
+- Split bullets into concise action-oriented statements.
+- Preserve original meaning; paraphrase only if necessary for clarity.
+- If you are unsure, leave the field empty.
+- If a resume section does not match the schema exactly, map it to the closest section.
+    For example: certifications -> awards, activities -> leadership, relevant coursework -> education.coursework.
+
+SEED_RESUME_JSON:
+{json.dumps(seed_resume, indent=2)}
+
+RAW_RESUME_TEXT:
+{raw_text}
+""".strip()
+
+
 def _build_chat_prompt(
     resume_json: Dict[str, Any],
     user_message: str,
@@ -65,6 +123,41 @@ USER_MESSAGE:
 {user_message}
 {history_block}
 """.strip()
+
+
+def parse_resume_with_llm(raw_text: str, seed_resume: Dict[str, Any]) -> Resume:
+    """
+    Input: raw resume text
+    Output: Resume Pydantic model parsed with LLM
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
+    client = genai.Client(api_key=api_key)
+    prompt = _build_parse_prompt(raw_text, seed_resume)
+
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.2,
+            max_output_tokens=4096,
+        ),
+    )
+
+    text = (resp.text or "").strip()
+
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1].strip() if len(parts) > 1 else text
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    data: Any = json.loads(text)
+    return Resume.model_validate(data)
 
 
 def propose_chat_edits(
