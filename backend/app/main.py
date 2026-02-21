@@ -13,6 +13,8 @@ from .llm import structure_resume
 from .parser import parse_resume_text
 from .storage import get_object_bytes
 import json
+THEIRSTACK_BASE = "https://api.theirstack.com/v1"
+THEIRSTACK_API_KEY = os.getenv("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiJhY211cmRvY2tAdW1hc3MuZWR1IiwicGVybWlzc2lvbnMiOiJ1c2VyIiwiY3JlYXRlZF9hdCI6IjIwMjYtMDItMjFUMjA6MTY6MjMuODI5NTAzKzAwOjAwIn0.xPrmBu2QaBoAiSVC1cwx1oAIIJN-X1iWxJSta-AUxnk")
 
 @app.post("/api/resume/{doc_id}/parse")
 async def parse_resume(doc_id: str):
@@ -98,6 +100,29 @@ async def structure_resume_endpoint(doc_id: str, req: StructureRequest):
     # 4. Return JSON
     return resume.model_dump()
 
+
+def _theirstack_post(path: str, body: Dict[str, Any], timeout_seconds: int = 20) -> Dict[str, Any]:
+    if not THEIRSTACK_API_KEY:
+        raise HTTPException(status_code=500, detail="Missing THEIRSTACK_API_KEY in environment")
+
+    url = f"{THEIRSTACK_BASE}{path}"
+    data = json.dumps(body).encode("utf-8")
+
+    req = Request(
+        url,
+        data=data,
+        method="POST",
+        headers={
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {THEIRSTACK_API_KEY}",  # TheirStack auth
+            "User-Agent": "resProject/1.0",
+        },
+    )
+
+    with urlopen(req, timeout=timeout_seconds) as resp:
+        raw = resp.read().decode("utf-8", errors="replace")
+    return json.loads(raw)
 class ChatRequest(BaseModel):
     message: str
 @app.post("/api/resume/{doc_id}/chat")
