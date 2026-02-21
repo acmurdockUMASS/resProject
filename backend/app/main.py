@@ -105,7 +105,7 @@ async def chat_resume(doc_id: str, req: ChatRequest):
 
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
-async def jobs_search(req: JobSearchRequest):
+async def jobs_search(req: JobSearchResponse):
     raw_jobs = await search_jobs(
         query=req.query,
         location_regex=req.location_regex,
