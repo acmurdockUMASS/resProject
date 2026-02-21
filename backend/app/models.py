@@ -1,6 +1,5 @@
 from pydantic import BaseModel
 from typing import List, Optional
-
 class UploadResumeResponse(BaseModel):
     doc_id: str
     filename: str
@@ -30,3 +29,15 @@ class PresignedUrlResponse(BaseModel):
     download_url: str
 
 
+
+class JobResult(BaseModel):
+    job_title: str
+    company: str
+    location: str
+    salary: Optional[str] = None
+    job_id: int
+    apply_url: Optional[str] = None
+
+class JobSearchResponse(BaseModel):
+    query: str
+    results: List[JobResult]
