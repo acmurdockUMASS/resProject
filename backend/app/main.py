@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
-from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult 
+from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult, JobSearchRequest
 from .resume_schema import Resume
 from .parser import parse_resume_text
 from .llm import apply_chat_edits
@@ -152,12 +152,11 @@ async def export_resume(doc_id: str):
     }
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
-async def jobs_search(req: JobSearchResponse):
+async def jobs_search(req: JobSearchRequest):
     raw_jobs = await search_jobs(
         query=req.query,
         location_regex=req.location_regex,
         min_salary_usd=req.min_salary_usd,
-        max_salary_usd=req.max_salary_usd,
         limit=req.limit,
     )
     mapped = [map_job(j) for j in raw_jobs]
