@@ -107,6 +107,38 @@ async def structure_resume_endpoint(doc_id: str, req: StructureRequest):
     # 4. Return JSON
     return resume.model_dump()
 
+class ChatRequest(BaseModel):
+    message: str
+@app.post("/api/resume/{doc_id}/chat")
+async def chat_resume(doc_id: str, req: ChatRequest):
+
+    # 1Load current draft JSON (or parsed if first time)
+    draft_key = f"draft/{doc_id}/resume.json"
+    parsed_key = f"parsed/{doc_id}/resume.json"
+
+    try:
+        raw = get_object_bytes(draft_key)
+    except Exception:
+        raw = get_object_bytes(parsed_key)
+
+    parsed_json = json.loads(raw.decode("utf-8"))
+
+    # 2️Validate into Resume model
+    resume = Resume.model_validate(parsed_json)
+
+    # 3️ Apply AI edits
+    updated = apply_chat_edits(resume, req.message)
+
+    # 4️ Save updated draft back to Spaces
+    put_object(
+        draft_key,
+        updated.model_dump_json(indent=2).encode("utf-8"),
+        "application/json"
+    )
+
+    # 5️ Return updated resume JSON
+    return updated.model_dump()
+
 def _fetch_json(url: str, timeout_seconds: int = 15) -> Dict[str, Any]:
     req = Request(url, headers={"Accept": "application/json", "User-Agent": "resProject/1.0"})
     with urlopen(req, timeout=timeout_seconds) as resp:
