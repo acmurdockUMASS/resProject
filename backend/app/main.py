@@ -3,13 +3,13 @@ import json
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from fastapi import FastAPI, UploadFile
-
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
-from .models import UploadResumeResponse, PresignedUrlResponse
+from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult 
 from .resume_schema import Resume
 from .parser import parse_resume_text
 from .llm import apply_chat_edits
+from .theirstack import search_jobs, map_job
 
 # Load environment variables FIRST
 load_dotenv()
@@ -17,7 +17,6 @@ load_dotenv()
 # Create FastAPI app BEFORE decorators
 app = FastAPI()
 
-GREENHOUSE_BASE = "https://boards-api.greenhouse.io/v1/boards"
 
 
 @app.get("/health")
@@ -103,3 +102,30 @@ async def chat_resume(doc_id: str, req: ChatRequest):
         "draft_key": draft_key,
         "resume": updated.model_dump(),
     }
+
+
+@app.post("/api/jobs/search", response_model=JobSearchResponse)
+async def jobs_search(req: JobSearchRequest):
+    raw_jobs = await search_jobs(
+        query=req.query,
+        location_regex=req.location_regex,
+        min_salary_usd=req.min_salary_usd,
+        max_salary_usd=req.max_salary_usd,
+        limit=req.limit,
+    )
+    mapped = [map_job(j) for j in raw_jobs]
+
+    # Adapt to your current JobResult model (you may want to add description/date_posted there)
+    results = [
+        JobResult(
+            job_id=j["job_id"],
+            job_title=j["job_title"] or "",
+            company=j["company"] or "",
+            location=j["location"] or "",
+            salary=j["salary"],
+            apply_url=j["apply_url"],
+        )
+        for j in mapped
+    ]
+
+    return JobSearchResponse(query=req.query, results=results)
