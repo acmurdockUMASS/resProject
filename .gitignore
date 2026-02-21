@@ -1,0 +1,13 @@
+cat > .gitignore << 'EOF'
+.venv/
+__pycache__/
+*.pyc
+.DS_Store
+
+backend/.env
+backend/app/__pycache__/
+uploads/
+outputs/
+node_modules/
+*.zip
+EOF
