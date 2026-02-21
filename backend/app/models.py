@@ -1,4 +1,4 @@
-from pydantic import BaseModel, root_validator
+from pydantic import BaseModel, model_validator
 from typing import List, Optional
 from datetime import date
 
@@ -32,7 +32,7 @@ class JobResult(BaseModel):
     description: Optional[str] = None
     date_posted: Optional[date] = None
 
-    @root_validator
+    @model_validator
     def _validate_location_radius(cls, values):
         city = values.get("location_city")
         radius = values.get("radius_miles")
