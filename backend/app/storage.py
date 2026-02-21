@@ -34,3 +34,8 @@ def presigned_get_url(key: str, expires_seconds: int = 3600) -> str:
         Params={"Bucket": bucket, "Key": key},
         ExpiresIn=expires_seconds,
     )
+def get_object_bytes(key: str) -> bytes:
+    bucket = os.environ["DO_SPACES_BUCKET"]
+    s3 = s3_client()
+    obj = s3.get_object(Bucket=bucket, Key=key)
+    return obj["Body"].read()

@@ -54,7 +54,7 @@ You should now see `(.venv)` in your terminal.
 From the project root:
 
 ```bash
-pip install -r backend/requirements.txt
+pip install -r requirements.txt
 ```
 
 (Optional but recommended)
