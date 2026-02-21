@@ -6,6 +6,8 @@ from .storage import put_object, presigned_get_url
 from .models import UploadResumeResponse, PresignedUrlResponse
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from .resume_schema import Resume
+from .llm import apply_chat_edits
 from .storage import get_object_bytes
 from .llm import structure_resume
 import json
@@ -17,7 +19,29 @@ from urllib.request import Request, urlopen
 from fastapi import HTTPException, Query
 
 from .models import JobResult, JobSearchResponse
+from .parser import parse_resume_text
+from .storage import get_object_bytes
+import json
 
+@app.post("/api/resume/{doc_id}/parse")
+async def parse_resume(doc_id: str):
+    text_key = f"extracted/{doc_id}/resume.txt"
+    raw_text = get_object_bytes(text_key).decode("utf-8", errors="replace")
+
+    resume = parse_resume_text(raw_text)
+
+    out_key = f"parsed/{doc_id}/resume.json"
+    put_object(
+        out_key,
+        resume.model_dump_json(indent=2).encode("utf-8"),
+        "application/json"
+    )
+
+    return {
+        "doc_id": doc_id,
+        "parsed_key": out_key,
+        "resume": resume.model_dump()
+    }
 
 GREENHOUSE_BASE = "https://boards-api.greenhouse.io/v1/boards"
 load_dotenv()
