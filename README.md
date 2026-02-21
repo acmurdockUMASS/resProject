@@ -4,7 +4,7 @@ Perfect. Here is a **single clean copy-paste block** you can drop directly into 
 
 ---
 
-# 🚀 Resume Backend – Local Setup Guide
+# Resume Backend – Local Setup Guide
 
 ## Prerequisites
 
