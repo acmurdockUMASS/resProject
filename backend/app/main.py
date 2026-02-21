@@ -121,7 +121,7 @@ async def export_resume(doc_id: str):
     resume_json = json.loads(raw.decode("utf-8", errors="replace"))
 
     # Load template.tex from disk
-    template_path = Path(__file__).parent / "templates" / "template.tex"
+    template_path = Path(__file__).parent / "latex" / "template.tex"
     if not template_path.exists():
         return {
             "error": "Missing template.tex",
