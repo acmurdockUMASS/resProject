@@ -10,15 +10,11 @@ from .resume_schema import Resume
 from .llm import apply_chat_edits
 from .storage import get_object_bytes
 from .llm import structure_resume
-import json
-import re
-from typing import Any, Dict, List, Optional
-from urllib.parse import urlencode
-from urllib.request import Request, urlopen
 
-from fastapi import HTTPException, Query
 
-from .models import JobResult, JobSearchResponse
+
+
+
 from .parser import parse_resume_text
 from .storage import get_object_bytes
 import json
