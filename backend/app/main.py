@@ -159,17 +159,19 @@ async def jobs_search(req: JobSearchRequest):
         min_salary_usd=req.min_salary_usd,
         limit=req.limit,
     )
+
     mapped = [map_job(j) for j in raw_jobs]
 
-    # Adapt to your current JobResult model (you may want to add description/date_posted there)
     results = [
         JobResult(
-            job_id=j["job_id"],
-            job_title=j["job_title"] or "",
-            company=j["company"] or "",
-            location=j["location"] or "",
-            salary=j["salary"],
-            apply_url=j["apply_url"],
+            job_id=str(j.get("job_id", "")),
+            job_title=j.get("job_title") or "",
+            company=j.get("company") or "",
+            location=j.get("location") or "",
+            salary=j.get("salary"),
+            apply_url=j.get("apply_url"),
+            description=j.get("description"),
+            date_posted=j.get("date_posted"),
         )
         for j in mapped
     ]
