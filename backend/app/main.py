@@ -1,5 +1,17 @@
 import os
 import uuid
+from fastapi import FastAPI, UploadFile
+from fastapi.responses import JSONResponse
+from .parse import extract_text
+from .storage import put_object, presigned_get_url
+from .models import UploadResumeResponse, PresignedUrlResponse
+from dotenv import load_dotenv
+from pydantic import BaseModel
+from .resume_schema import Resume
+from .llm import apply_chat_edits
+from .storage import get_object_bytes
+from .parser import parse_resume_text
+from .storage import get_object_bytes
 import json
 from typing import Dict, Any, List
 
@@ -85,6 +97,8 @@ async def structure_resume_endpoint(doc_id: str, req: StructureRequest):
     put_object(out_key, resume.model_dump_json(indent=2).encode(), "application/json")
 
     return resume.model_dump()
+    url = presigned_get_url(text_key, expires_seconds=3600)
+    return PresignedUrlResponse(doc_id=doc_id, upload_key=text_key, download_url=url)
 
 
 # ------------------ CHAT EDITS ------------------

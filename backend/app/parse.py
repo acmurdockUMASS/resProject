@@ -1,18 +1,22 @@
 from fastapi import UploadFile, HTTPException
-import fitz  # PyMuPDF
 from docx import Document
+import pdfplumber
 import tempfile
 import os
 
 
 def extract_text_from_pdf_bytes(data: bytes) -> str:
-    doc = fitz.open(stream=data, filetype="pdf")
-    parts = []
-    for page in doc:
-        parts.append(page.get_text("text"))
-    return "\n".join(parts).strip()
-
-
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+        tmp.write(data)
+        path = tmp.name
+    try:
+        parts = []
+        with pdfplumber.open(path) as pdf:
+            for page in pdf.pages:
+                parts.append(page.extract_text() or "")
+        return "\n".join(parts).strip()
+    finally:
+        os.unlink(path)
 def extract_text_from_docx_bytes(data: bytes) -> str:
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
         tmp.write(data)
