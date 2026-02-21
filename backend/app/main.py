@@ -10,6 +10,9 @@ from .resume_schema import Resume
 from .parser import parse_resume_text
 from .llm import apply_chat_edits
 from .theirstack import search_jobs, map_job
+import io
+import zipfile
+from pathlib import Path
 
 # Load environment variables FIRST
 load_dotenv()
@@ -102,7 +105,51 @@ async def chat_resume(doc_id: str, req: ChatRequest):
         "draft_key": draft_key,
         "resume": updated.model_dump(),
     }
+@app.post("/api/resume/{doc_id}/export")
+async def export_resume(doc_id: str):
+    # Load draft if it exists, else parsed
+    draft_key = f"draft/{doc_id}/resume.json"
+    parsed_key = f"parsed/{doc_id}/resume.json"
 
+    try:
+        raw = get_object_bytes(draft_key)
+        source_key = draft_key
+    except Exception:
+        raw = get_object_bytes(parsed_key)
+        source_key = parsed_key
+
+    resume_json = json.loads(raw.decode("utf-8", errors="replace"))
+
+    # Load template.tex from disk
+    template_path = Path(__file__).parent / "templates" / "template.tex"
+    if not template_path.exists():
+        return {
+            "error": "Missing template.tex",
+            "expected_path": str(template_path),
+            "used_resume_key": source_key,
+        }
+
+    template_tex = template_path.read_text(encoding="utf-8")
+
+    # Zip it in-memory
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        z.writestr("resume.json", json.dumps(resume_json, indent=2))
+        z.writestr("template.tex", template_tex)
+
+    buf.seek(0)
+
+    export_key = f"exports/{doc_id}/resume_bundle.zip"
+    put_object(export_key, buf.read(), "application/zip")
+
+    url = presigned_get_url(export_key, expires_seconds=3600)
+
+    return {
+        "doc_id": doc_id,
+        "source_key": source_key,
+        "export_key": export_key,
+        "download_url": url,
+    }
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchResponse):
