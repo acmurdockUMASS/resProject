@@ -17,7 +17,7 @@ def _to_salary_string(job: Dict[str, Any]) -> Optional[str]:
     if s:
         return s
     lo = job.get("min_annual_salary_usd")
-    hi = job.get("max_annual_salary_usd")
+    
     if lo and hi:
         return f"${int(lo):,} - ${int(hi):,} USD"
     if lo:
@@ -31,7 +31,7 @@ async def search_jobs(
     query: str,
     location_regex: Optional[str] = None,
     min_salary_usd: Optional[int] = None,
-    max_salary_usd: Optional[int] = None,
+    
     limit: int = 25,
 ) -> List[Dict[str, Any]]:
     """
@@ -51,8 +51,6 @@ async def search_jobs(
     if min_salary_usd is not None:
         payload["min_salary_usd"] = min_salary_usd
 
-    if max_salary_usd is not None:
-        payload["max_salary_usd"] = max_salary_usd
 
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
@@ -70,17 +68,36 @@ async def search_jobs(
         jobs = data.get("jobs") or data.get("results") or []
     return jobs
 
+def _company_name(job: Dict[str, Any]) -> str:
+    # Prefer explicit company_name
+    if isinstance(job.get("company_name"), str) and job["company_name"].strip():
+        return job["company_name"].strip()
+
+    company = job.get("company")
+
+    # company sometimes is {"name": "..."}
+    if isinstance(company, dict):
+        name = company.get("name")
+        if isinstance(name, str):
+            return name.strip()
+
+    # company sometimes is "Acme Inc"
+    if isinstance(company, str):
+        return company.strip()
+
+    return ""
+
+
 def map_job(job: Dict[str, Any]) -> Dict[str, Any]:
     """
     Map TheirStack job record to the fields you want.
-    Their dataset dictionary includes: job_title, company_name, description, location, salary_string, date_posted, etc.
     """
     return {
-        "job_id": job.get("id"),
-        "job_title": job.get("job_title") or job.get("title"),
-        "company": job.get("company_name") or (job.get("company") or {}).get("name"),
+        "job_id": job.get("id") or job.get("job_id"),
+        "job_title": job.get("job_title") or job.get("title") or "",
+        "company": _company_name(job),
         "description": job.get("description"),
-        "location": job.get("location") or job.get("short_location") or job.get("long_location"),
+        "location": job.get("location") or job.get("short_location") or job.get("long_location") or "",
         "salary": _to_salary_string(job),
         "apply_url": job.get("url") or job.get("final_url") or job.get("source_url"),
         "date_posted": job.get("date_posted"),

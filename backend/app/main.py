@@ -16,7 +16,7 @@ from .theirstack import search_jobs, map_job
 import io
 import zipfile
 from pathlib import Path
-
+import re
 # Load environment variables FIRST
 load_dotenv()
 
@@ -259,12 +259,31 @@ async def export_resume(doc_id: str):
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchRequest):
-    raw_jobs = await search_jobs(
-        query=req.query,
-        location_regex=req.location_regex,
-        min_salary_usd=req.min_salary_usd,
-        limit=req.limit,
-    )
+    # Build a best-effort location_regex from a city name, since downstream search
+    # currently accepts location_regex.
+    location_regex = None
+    if req.location_city:
+        city = req.location_city.strip()
+        if city:
+            # case-insensitive whole-word-ish match (best effort)
+            location_regex = rf"(?i)\b{re.escape(city)}\b"
+
+    kwargs = {
+        "query": req.role,
+        "min_salary_usd": req.min_salary_usd,
+        "limit": req.limit,
+    }
+    if location_regex:
+        kwargs["location_regex"] = location_regex
+    if req.radius_miles is not None:
+        kwargs["radius_miles"] = req.radius_miles
+
+    # Some backends may not support radius_miles yet; retry without it.
+    try:
+        raw_jobs = await search_jobs(**kwargs)
+    except TypeError:
+        kwargs.pop("radius_miles", None)
+        raw_jobs = await search_jobs(**kwargs)
 
     mapped = [map_job(j) for j in raw_jobs]
 
@@ -282,4 +301,4 @@ async def jobs_search(req: JobSearchRequest):
         for j in mapped
     ]
 
-    return JobSearchResponse(query=req.query, results=results)
+    return JobSearchResponse(role=req.role, results=results)
