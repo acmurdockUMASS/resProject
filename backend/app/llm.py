@@ -3,10 +3,19 @@ import os
 import json
 from typing import Any, Dict, List, Optional
 
+from pydantic import BaseModel, Field
+
 from google import genai
 from google.genai import types
 
 from .resume_schema import Resume
+
+
+class LLMEditProposal(BaseModel):
+    assistant_message: str
+    edits_summary: List[str] = Field(default_factory=list)
+    proposed_resume: Dict[str, Any]
+    needs_confirmation: bool = True
 
 
 def _build_chat_prompt(
@@ -15,8 +24,8 @@ def _build_chat_prompt(
     history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """
-    Gemini should update the resume JSON based on the user's message.
-    It must return ONLY JSON matching the same schema.
+    Gemini should propose resume edits based on the user's message.
+    It must return ONLY JSON matching the response schema below.
     """
     history_block = ""
     if history:
@@ -29,12 +38,25 @@ def _build_chat_prompt(
     return f"""
 Return ONLY valid JSON. No markdown. No commentary.
 
-You are editing an existing resume JSON object. The JSON schema MUST remain identical.
+You are helping edit an existing resume JSON object. The resume JSON schema MUST remain identical.
 Do NOT invent employers, schools, titles, dates, locations, metrics, or links.
 You MAY rewrite bullet wording to be more professional/technical while preserving meaning.
 You MAY add new bullets ONLY if the user explicitly provides the underlying facts.
 If the user says "remove", remove it. If the user says "keep", preserve it.
 If unknown, use "" or [].
+
+Return JSON with exactly these keys:
+- assistant_message: string to show the user
+- edits_summary: array of short bullet strings describing the changes
+- proposed_resume: full resume JSON object (same schema as CURRENT_RESUME_JSON)
+- needs_confirmation: boolean
+
+If you need more info, ask a concise question in assistant_message, set needs_confirmation=false,
+and return proposed_resume equal to CURRENT_RESUME_JSON with edits_summary=[].
+
+If you are ready to propose edits, include edits_summary (3-7 bullets), set needs_confirmation=true,
+and in assistant_message say: "Here are the edits I can make:" then list the edits, and end with
+"Should I go ahead and make your new resume?".
 
 CURRENT_RESUME_JSON:
 {json.dumps(resume_json, indent=2)}
@@ -45,14 +67,14 @@ USER_MESSAGE:
 """.strip()
 
 
-def apply_chat_edits(
+def propose_chat_edits(
     resume: Resume,
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None,
-) -> Resume:
+) -> LLMEditProposal:
     """
     Input: Resume Pydantic model (already parsed WITHOUT AI)
-    Output: Updated Resume model (same schema)
+    Output: LLM edit proposal and message for the user
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -83,4 +105,8 @@ def apply_chat_edits(
             text = text[4:].strip()
 
     data: Any = json.loads(text)
-    return Resume.model_validate(data)
+    proposal = LLMEditProposal.model_validate(data)
+
+    # Ensure proposed resume still validates against the schema
+    Resume.model_validate(proposal.proposed_resume)
+    return proposal
