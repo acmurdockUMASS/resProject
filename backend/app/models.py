@@ -18,22 +18,14 @@ class PresignedUrlResponse(BaseModel):
 
 class JobSearchRequest(BaseModel):
     role: str
-    location_city: Optional[str] = None
+    country: Optional[str] = None
     min_salary_usd: Optional[int] = None
-    radius_miles: Optional[int] = None
     limit: int = 10
 
     @model_validator(mode="after")
-    def _validate_location_radius(self):
-        if self.radius_miles is not None:
-            if not self.location_city or not self.location_city.strip():
-                raise ValueError("radius_miles requires location_city")
-            if self.radius_miles <= 0:
-                raise ValueError("radius_miles must be > 0")
-
+    def validate_salary(self):
         if self.min_salary_usd is not None and self.min_salary_usd <= 0:
             raise ValueError("min_salary_usd must be > 0")
-
         return self
 
 

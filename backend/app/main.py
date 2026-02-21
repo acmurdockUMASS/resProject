@@ -259,31 +259,13 @@ async def export_resume(doc_id: str):
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchRequest):
-    # Build a best-effort location_regex from a city name, since downstream search
-    # currently accepts location_regex.
-    location_regex = None
-    if req.location_city:
-        city = req.location_city.strip()
-        if city:
-            # case-insensitive whole-word-ish match (best effort)
-            location_regex = rf"(?i)\b{re.escape(city)}\b"
 
-    kwargs = {
-        "query": req.role,
-        "min_salary_usd": req.min_salary_usd,
-        "limit": req.limit,
-    }
-    if location_regex:
-        kwargs["location_regex"] = location_regex
-    if req.radius_miles is not None:
-        kwargs["radius_miles"] = req.radius_miles
-
-    # Some backends may not support radius_miles yet; retry without it.
-    try:
-        raw_jobs = await search_jobs(**kwargs)
-    except TypeError:
-        kwargs.pop("radius_miles", None)
-        raw_jobs = await search_jobs(**kwargs)
+    raw_jobs = await search_jobs(
+        query=req.role,
+        country=req.country,
+        min_salary_usd=req.min_salary_usd,
+        limit=req.limit,
+    )
 
     mapped = [map_job(j) for j in raw_jobs]
 
