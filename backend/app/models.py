@@ -32,7 +32,7 @@ class JobResult(BaseModel):
     description: Optional[str] = None
     date_posted: Optional[date] = None
 
-    @model_validator
+    @model_validator(mode = "after")
     def _validate_location_radius(cls, values):
         city = values.get("location_city")
         radius = values.get("radius_miles")
