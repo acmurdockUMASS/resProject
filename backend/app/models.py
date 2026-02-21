@@ -14,8 +14,15 @@ class PresignedUrlResponse(BaseModel):
     upload_key: str
     download_url: str
 
+
+class JobSearchRequest(BaseModel):
+    query: str
+    location_regex: Optional[str] = None
+    min_salary_usd: Optional[int] = None
+    limit: int = 10
+
 class JobResult(BaseModel):
-    job_id: int
+    job_id: str
     job_title: str
     company: str
     location: str
