@@ -54,10 +54,8 @@ async def search_jobs(
         "posted_at_max_age_days": 14,
         "job_title_or": [query],
     }
-
-    # US-only location filter
-    if location:
-        payload["location"] = location
+    # NOTE: TheirStack /v1/jobs/search rejects unknown fields like `location`.
+    # We accept `location` in our API but filter locally after results are returned.
 
     if min_salary_usd is not None:
         payload["min_salary_usd"] = min_salary_usd
