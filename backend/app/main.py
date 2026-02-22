@@ -112,6 +112,7 @@ def health():
 
 
 @app.post("/api/resume", response_model=UploadResumeResponse)
+@app.post("/resume", response_model=UploadResumeResponse)
 async def upload_resume(file: UploadFile):
     raw_text, raw_bytes = await extract_text(file)
 
@@ -133,12 +134,14 @@ async def upload_resume(file: UploadFile):
 
 
 @app.get("/api/resume/{doc_id}/text", response_model=PresignedUrlResponse)
+@app.get("/resume/{doc_id}/text", response_model=PresignedUrlResponse)
 async def get_extracted_text(doc_id: str):
     text_key = f"extracted/{doc_id}/resume.txt"
     url = presigned_get_url(text_key, expires_seconds=3600)
     return PresignedUrlResponse(doc_id=doc_id, upload_key=text_key, download_url=url)
 
 @app.post("/api/resume/{doc_id}/parse")
+@app.post("/resume/{doc_id}/parse")
 async def parse_resume(doc_id: str):
     text_key = f"extracted/{doc_id}/resume.txt"
     raw_text = get_object_bytes(text_key).decode("utf-8", errors="replace")
@@ -168,6 +171,7 @@ class TailorResumeRequest(BaseModel):
 
 
 @app.post("/api/resume/{doc_id}/chat")
+@app.post("/resume/{doc_id}/chat")
 async def chat_resume(doc_id: str, req: ChatRequest):
     draft_key = f"draft/{doc_id}/resume.json"
     parsed_key = f"parsed/{doc_id}/resume.json"
@@ -322,6 +326,7 @@ async def chat_resume(doc_id: str, req: ChatRequest):
 
 
 @app.post("/api/resume/{doc_id}/tailor")
+@app.post("/resume/{doc_id}/tailor")
 async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
     draft_key = f"draft/{doc_id}/resume.json"
     parsed_key = f"parsed/{doc_id}/resume.json"
@@ -364,6 +369,7 @@ async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
 
 
 @app.post("/api/resume/{doc_id}/export")
+@app.post("/resume/{doc_id}/export")
 async def export_resume(doc_id: str):
     # Load draft if it exists, else parsed
     draft_key = f"draft/{doc_id}/resume.json"
@@ -411,6 +417,7 @@ async def export_resume(doc_id: str):
     }
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
+@app.post("/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchRequest):
     # TheirStack currently only supports filtering by role/title + salary (+ other internal fields),
     # and will reject unknown fields like `location`. So we:
