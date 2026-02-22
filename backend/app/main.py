@@ -10,7 +10,7 @@ from .storage import put_object, presigned_get_url, get_object_bytes
 from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult, JobSearchRequest
 from .resume_schema import Resume
 from .parser import parse_resume_text
-from .llm import propose_chat_edits
+from .llm import propose_chat_edits, propose_job_tailored_edits
 from .render import render_resume_to_latex
 from .theirstack import search_jobs, map_job
 import io
@@ -107,6 +107,10 @@ async def parse_resume(doc_id: str):
 
 class ChatRequest(BaseModel):
     message: str
+
+
+class TailorResumeRequest(BaseModel):
+    job_description: str
 
 
 @app.post("/api/resume/{doc_id}/chat")
@@ -207,6 +211,48 @@ async def chat_resume(doc_id: str, req: ChatRequest):
         "proposed_resume": proposal.proposed_resume,
         "needs_confirmation": proposal.needs_confirmation,
         "status": "pending" if proposal.needs_confirmation else "info",
+    }
+
+
+@app.post("/api/resume/{doc_id}/tailor")
+async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
+    draft_key = f"draft/{doc_id}/resume.json"
+    parsed_key = f"parsed/{doc_id}/resume.json"
+    pending_key = f"draft/{doc_id}/pending.json"
+
+    job_description = req.job_description.strip()
+    if not job_description:
+        return {"error": "job_description is required"}
+
+    try:
+        raw = get_object_bytes(draft_key)
+        source_key = draft_key
+    except Exception:
+        raw = get_object_bytes(parsed_key)
+        source_key = parsed_key
+
+    parsed_json = json.loads(raw.decode("utf-8", errors="replace"))
+    resume = Resume.model_validate(parsed_json)
+
+    proposal = propose_job_tailored_edits(resume, job_description)
+
+    _save_json(
+        pending_key,
+        {
+            "status": "pending",
+            "resume": proposal.proposed_resume,
+            "edits_summary": proposal.edits_summary,
+        },
+    )
+
+    return {
+        "doc_id": doc_id,
+        "source_key": source_key,
+        "assistant_message": proposal.assistant_message,
+        "edits_summary": proposal.edits_summary,
+        "proposed_resume": proposal.proposed_resume,
+        "needs_confirmation": True,
+        "status": "pending",
     }
 
 
