@@ -26,10 +26,16 @@ def _build_parse_prompt(raw_text: str, seed_resume: Dict[str, Any]) -> str:
         return f"""
 Return ONLY valid JSON. No markdown. No commentary.
 
+
 You will be given a SEED_RESUME_JSON already extracted from the resume.
 Your job is to PRESERVE all existing data in SEED_RESUME_JSON and fill missing fields
 by extracting from RAW_RESUME_TEXT. Do NOT remove or overwrite existing non-empty values
 unless the raw text explicitly corrects them.
+
+If the user asks for a broad improvement like "make it professional", "polish it", "improve it",
+you MUST propose edits across ALL experience + project bullets (rewrite wording only, no new facts).
+Do NOT ask what to improve in that case.
+Set needs_confirmation=true and provide edits_summary.
 
 Map any extra resume information into the closest matching field so the final output
 matches this JSON schema:
@@ -158,6 +164,8 @@ Return ONLY valid JSON. No markdown. No commentary.
 You are tailoring an existing resume JSON object to align with a job posting.
 The resume JSON schema MUST remain identical.
 
+If the user says “make it professional / polish / improve”, you MUST propose edits across all experience + project bullets. Do NOT ask what to improve.
+
 Hard integrity rules:
 - Do NOT invent employers, schools, titles, dates, locations, links, awards, projects, or metrics.
 - Keep all existing experience factually consistent.
@@ -197,7 +205,7 @@ def parse_resume_with_llm(raw_text: str, seed_resume: Dict[str, Any]) -> Resume:
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     client = genai.Client(api_key=api_key)
     prompt = _build_parse_prompt(raw_text, seed_resume)
@@ -231,20 +239,48 @@ def propose_chat_edits(
     """
     Input: Resume Pydantic model (already parsed WITHOUT AI)
     Output: LLM edit proposal and message for the user
+
+    Robustness:
+    - Calls Gemini once with the normal prompt
+    - If output fails JSON/schema validation, retries once with a strict "fix your JSON" prompt
+    - If still failing, returns a safe, non-crashing response
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
 
-    prompt = _build_chat_prompt(resume.model_dump(), user_message, history)
+    def _strip_fences(s: str) -> str:
+        s = (s or "").strip()
+        if s.startswith("```"):
+            parts = s.split("```")
+            s = parts[1].strip() if len(parts) > 1 else s
+            if s.lower().startswith("json"):
+                s = s[4:].strip()
+        return s
 
-    resp = client.models.generate_content(
+    def _retry_prompt(previous_output: str, base_prompt: str) -> str:
+        return f"""
+You returned invalid JSON.
+
+Return ONLY valid JSON that matches the required response schema EXACTLY.
+No markdown. No commentary. No extra keys.
+
+Fix your previous output into valid JSON:
+{previous_output}
+
+Original instructions:
+{base_prompt}
+""".strip()
+
+    base_prompt = _build_chat_prompt(resume.model_dump(), user_message, history)
+
+    # --- Attempt 1 ---
+    resp1 = client.models.generate_content(
         model=model,
-        contents=prompt,
+        contents=base_prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,
             max_output_tokens=4096,
@@ -252,40 +288,50 @@ def propose_chat_edits(
         ),
     )
 
-    text = (resp.text or "").strip()
+    text1 = _strip_fences(resp1.text or "")
 
-    text = (resp.text or "").strip()
-
-    # still strip fences just in case (usually unnecessary once schema enforced)
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1].strip() if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-
-    # Validate directly
     try:
-        proposal = LLMEditProposal.model_validate_json(text)
+        proposal = LLMEditProposal.model_validate_json(text1)
+        Resume.model_validate(proposal.proposed_resume)
+        return proposal
     except ValidationError:
-        try:
-            data = json.loads(text)
-            proposal = LLMEditProposal.model_validate(data)
-        except Exception:
-            # Fallback safe response
-            return LLMEditProposal(
-                assistant_message=(
-                    "I can help! Try a specific change like "
-                    "“make bullets more professional” or "
-                    "“rewrite my first experience with stronger action verbs.”"
-                ),
-                edits_summary=[],
-                proposed_resume=resume.model_dump(),
-                needs_confirmation=False,
-            )
-    # Ensure proposed resume still validates against the schema
-    Resume.model_validate(proposal.proposed_resume)
-    return proposal
+        # fall through to retry
+        pass
+    except Exception:
+        # any other parsing error -> retry once
+        pass
 
+    # --- Attempt 2 (strict repair) ---
+    rp = _retry_prompt(text1, base_prompt)
+    resp2 = client.models.generate_content(
+        model=model,
+        contents=rp,
+        config=types.GenerateContentConfig(
+            temperature=0.0,
+            max_output_tokens=4096,
+            response_mime_type="application/json",
+        ),
+    )
+
+    text2 = _strip_fences(resp2.text or "")
+
+    try:
+        proposal2 = LLMEditProposal.model_validate_json(text2)
+        Resume.model_validate(proposal2.proposed_resume)
+        return proposal2
+    except Exception:
+        # --- Final safe fallback (no crash, no loop) ---
+        return LLMEditProposal(
+            assistant_message=(
+                "I ran into a formatting issue generating the edit plan. "
+                "Try again with a broad command like:\n"
+                "- “Rewrite all my experience and project bullets to be more professional.”\n"
+                "- “Tighten my bullets to one line each, keeping the meaning the same.”"
+            ),
+            edits_summary=[],
+            proposed_resume=resume.model_dump(),
+            needs_confirmation=False,
+        )
 
 def propose_job_tailored_edits(
     resume: Resume,
@@ -299,7 +345,7 @@ def propose_job_tailored_edits(
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     client = genai.Client(api_key=api_key)
     prompt = _build_job_tailor_prompt(resume.model_dump(), job_description)
@@ -325,3 +371,16 @@ def propose_job_tailored_edits(
     proposal = LLMEditProposal.model_validate_json(text)
     Resume.model_validate(proposal.proposed_resume)
     return proposal
+def _build_chat_retry_prompt(raw_output: str, base_prompt: str) -> str:
+    return f"""
+You returned invalid JSON.
+
+You MUST now return ONLY valid JSON that matches the required response schema EXACTLY.
+No markdown. No commentary. No extra keys.
+
+Here is your previous output (DO NOT repeat it verbatim; fix it into valid JSON):
+{raw_output}
+
+Original instructions:
+{base_prompt}
+""".strip()
