@@ -70,39 +70,44 @@ def _section(title: str, body: str) -> str:
 
 
 def _render_header(resume: Resume) -> str:
-	header = resume.header
-	name = _escape_latex(header.name) if header.name else ""
-	contact_parts: List[str] = []
-	link_parts: List[str] = []
+    header = resume.header
+    name = _escape_latex(header.name) if header.name else ""
 
-	if header.phone:
-		contact_parts.append(_escape_latex(header.phone))
-	if header.email:
-		email = _escape_latex(header.email)
-		contact_parts.append(f"\\href{{mailto:{header.email}}}{{{email}}}")
-	if header.linkedin:
-		link = _normalize_url(header.linkedin)
-		link_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.linkedin)}}}")
-	if header.github:
-		link = _normalize_url(header.github)
-		link_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.github)}}}")
-	if header.portfolio:
-		link = _normalize_url(header.portfolio)
-		link_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.portfolio)}}}")
+    contact_parts: List[str] = []
 
-	if link_parts:
-		contact_parts.extend(link_parts)
-	elif header.location:
-		contact_parts.append(_escape_latex(header.location))
+    if header.phone:
+        contact_parts.append(_escape_latex(header.phone))
 
-	contact_line = _join_non_empty(contact_parts, sep=" \\textbar{} ")
-	lines = ["\\begin{center}"]
-	if name:
-		lines.append(f"    {{\\LARGE \\textbf{{{name}}}}} \\")
-	if contact_line:
-		lines.append(f"    {contact_line}")
-	lines.append("\\end{center}")
-	return "\n".join(lines)
+    if header.email:
+        email_disp = _escape_latex(header.email)
+        # keep clickable mailto but display escaped
+        contact_parts.append(f"\\href{{mailto:{header.email}}}{{{email_disp}}}")
+
+    # Optional: include location always if present
+    if header.location:
+        contact_parts.append(_escape_latex(header.location))
+
+    # Optional links (if you want them in the same centered line too)
+    if header.linkedin:
+        link = _normalize_url(header.linkedin)
+        contact_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.linkedin)}}}")
+    if header.github:
+        link = _normalize_url(header.github)
+        contact_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.github)}}}")
+    if header.portfolio:
+        link = _normalize_url(header.portfolio)
+        contact_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.portfolio)}}}")
+
+    contact_line = " \\textbar{} ".join([p for p in contact_parts if p])
+
+    lines = ["\\begin{center}"]
+    if name:
+        lines.append(f"{{\\LARGE \\textbf{{{name}}}}}\\\\")
+    if contact_line:
+        lines.append(f"{contact_line}")
+    lines.append("\\end{center}")
+    lines.append("\\vspace{6pt}")  # small spacing below header
+    return "\n".join(lines)
 
 def _render_education(resume: Resume) -> str:
 	entries = []
