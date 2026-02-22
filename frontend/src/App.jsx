@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   uploadResume,
   parseResume,
   chatResume,
   exportResume,
+  previewResume,
   searchJobs,
   tailorResume,
 } from "./api.js";
@@ -36,7 +37,6 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [tailoringJobKey, setTailoringJobKey] = useState(null);
   const [status, setStatus] = useState("");
-  const [previewUrl, setPreviewUrl] = useState("");
 
   const [docId, setDocId] = useState(null);
   const [filename, setFilename] = useState(null);
@@ -166,22 +166,6 @@ export default function App() {
       setExporting(false);
       window.setTimeout(() => setStatus(""), 2500);
     }
-  }
-
-  function handlePreview() {
-    if (!previewUrl) {
-      setStatus("Export first to preview");
-      window.setTimeout(() => setStatus(""), 2000);
-      return;
-    }
-
-    if (previewUrl.toLowerCase().includes(".pdf")) {
-      window.open(previewUrl, "_blank", "noopener,noreferrer");
-      return;
-    }
-
-    setStatus("Current export is a ZIP bundle; PDF preview is not available yet.");
-    window.setTimeout(() => setStatus(""), 2600);
   }
 
   async function handleJobSearch() {
@@ -320,16 +304,6 @@ export default function App() {
                     type="button"
                   >
                     Choose file
-                  </button>
-
-                  <button
-                    onClick={handlePreview}
-                    className="rounded-xl bg-[#b784a7] px-3 py-1.5 text-xs font-semibold text-black shadow-sm hover:bg-[#a77398] disabled:opacity-60"
-                    disabled={!previewUrl}
-                    type="button"
-                    title={!previewUrl ? "Export a resume first" : "Preview exported file"}
-                  >
-                    Preview
                   </button>
 
                   <button
