@@ -276,22 +276,6 @@ async def jobs_search(req: JobSearchRequest):
     mapped = [map_job(j) for j in raw_jobs]
 
     # Local location filter (expects canonical "City, ST" from JobSearchRequest validator)
-    if req.location:
-        want_city, want_state = [p.strip() for p in req.location.split(",", 1)]
-        want_city_l = want_city.lower()
-        want_state_u = want_state.upper()
-
-        state_pat = re.compile(rf"\b{re.escape(want_state_u)}\b")
-
-        def _loc_matches(job_loc: str) -> bool:
-            loc = (job_loc or "").strip()
-            if not loc:
-                return False
-            loc_l = loc.lower()
-            loc_u = loc.upper()
-            return (want_city_l in loc_l) and (state_pat.search(loc_u) is not None)
-
-        mapped = [j for j in mapped if _loc_matches(j.get("location") or "")]
 
     # Enforce final limit after local filtering
     mapped = mapped[: req.limit]
