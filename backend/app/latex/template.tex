@@ -1,27 +1,104 @@
-\documentclass[11pt]{article}
-\usepackage[margin=0.75in]{geometry}
+% =========================
+% Resume Template (Aligned Dates/Locations + Optional Sections)
+% =========================
+\documentclass[10pt,letterpaper]{article}
+
+\usepackage[margin=0.65in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{lmodern}
 \usepackage{enumitem}
-\usepackage{titlesec}
 \usepackage[hidelinks]{hyperref}
+\usepackage{tabularx}
+\usepackage{ragged2e}
+\usepackage{xcolor}
+\usepackage{ifthen}
+\usepackage{etoolbox}
 
-\pagenumbering{gobble}
-\setlist[itemize]{noitemsep, topsep=0pt}
-\titleformat{\section}{\large\bfseries}{}{0em}{}[\titlerule]
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{0pt}
 
+% ====== Spacing / list tuning ======
+\setlist[itemize]{leftmargin=*, nosep, topsep=2pt, itemsep=2pt, parsep=0pt}
+
+% ====== Helpers ======
+\newcommand{\IfNotBlank}[2]{\ifblank{#1}{}{#2}}
+
+% Section header
+\newcommand{\ResumeSection}[1]{
+  \vspace{10pt}
+  {\large\bfseries #1}\par
+  \vspace{3pt}
+  \hrule
+  \vspace{6pt}
+}
+
+% One-line "left / right" row (for top header)
+\newcommand{\HeaderRow}[2]{
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} l r}
+    #1 & #2 \\
+  \end{tabular*}
+}
+
+% Two-line heading block: line1 (left/right), line2 (left/right)
+\newcommand{\EntryHeading}[4]{
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} l r}
+    \textbf{#1} & \textbf{#2} \\
+    \textit{#3} & \textit{#4} \\
+  \end{tabular*}
+}
+
+% Single-line heading block: line1 (left/right), line2 optional (left/right)
+% Useful when you want "Company (left) | Dates (right)" and then "Location (left) | Role (right)" OR vice versa.
+\newcommand{\EntryHeadingOne}[4]{
+  \begin{tabular*}{\textwidth}{@{\extracolsep{\fill}} l r}
+    \textbf{#1} & \textbf{#2} \\
+    #3 & #4 \\
+  \end{tabular*}
+}
+
+% Bullet list under an entry
+\newenvironment{EntryBullets}{
+  \vspace{2pt}
+  \begin{itemize}
+}{
+  \end{itemize}
+  \vspace{4pt}
+}
+
+% ====== Section wrappers that auto-hide if content empty ======
+\newcommand{\SectionIfContent}[2]{%
+  \IfNotBlank{#2}{%
+    \ResumeSection{#1}%
+    #2%
+  }%
+}
+
+% =========================
+% DOCUMENT
+% =========================
 \begin{document}
 
-{{HEADER_BLOCK}}
+% ====== HEADER (Replace these tokens in backend) ======
+% Recommended: keep header deterministic; don't let AI invent layout.
+{\LARGE \textbf{%%NAME%%}}\par
+\vspace{2pt}
+\HeaderRow{%%PHONE%% \; $\cdot$ \; \href{mailto:%%EMAIL%%}{%%EMAIL%%}}{%%LOCATION%%}
+\IfNotBlank{%%LINKS%%}{\vspace{2pt}\HeaderRow{%%LINKS%%}{}}
 
-{{EDUCATION_BLOCK}}
+% =========================
+% SECTIONS (content injected by backend)
+% Each content block should be valid LaTeX OR empty
+% =========================
 
-{{EXPERIENCE_BLOCK}}
+\SectionIfContent{Education}{%%EDUCATION%%}
 
-{{PROJECTS_BLOCK}}
+\SectionIfContent{Work Experience}{%%WORK%%}
 
-{{SKILLS_BLOCK}}
+\SectionIfContent{Projects}{%%PROJECTS%%}
 
-{{LEADERSHIP_BLOCK}}
+\SectionIfContent{Extracurriculars}{%%EXTRACURRICULARS%%}
 
-{{AWARDS_BLOCK}}
+\SectionIfContent{Awards}{%%AWARDS%%}
 
 \end{document}

@@ -95,7 +95,7 @@ def _render_header(resume: Resume) -> str:
 	elif header.location:
 		contact_parts.append(_escape_latex(header.location))
 
-	contact_line = _join_non_empty(contact_parts)
+	contact_line = _join_non_empty(contact_parts, sep=" \\textbar{} ")
 	lines = ["\\begin{center}"]
 	if name:
 		lines.append(f"    {{\\LARGE \\textbf{{{name}}}}} \\")
@@ -114,12 +114,13 @@ def _render_education(resume: Resume) -> str:
 		)
 		grad = _escape_latex(edu.grad)
 		lines = []
-		header = _join_non_empty([
-			f"\\textbf{{{school}}}" if school else "",
-			f"\\hfill {grad}" if grad else "",
-		], sep=" ")
-		if header:
-			lines.append(header + " \\")
+		left_text = f"\\textbf{{{school}}}" if school else ""
+		if left_text or grad:
+			lines.append(
+				"\\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} l r}"
+				f"{left_text} & {grad} \\\\"
+				"\\end{tabular*}"
+			)
 		if degree_bits:
 			lines.append(degree_bits + " \\")
 		if edu.coursework:
@@ -145,10 +146,13 @@ def _render_experience(resume: Resume) -> str:
 		if location:
 			left_bits.append(f"\\textit{{{location}}}")
 		left_text = " ".join(left_bits)
-		header = _join_non_empty([
-			left_text,
-			f"\\hfill {date_range}" if date_range else "",
-		], sep=" ")
+		header = ""
+		if left_text or date_range:
+			header = (
+				"\\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} l r}"
+				f"{left_text} & {date_range} \\\\"
+				"\\end{tabular*}"
+			)
 		role_line = _escape_latex(role.role)
 		bullets = _format_itemize(role.bullets)
 		parts = []
