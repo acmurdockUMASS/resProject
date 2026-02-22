@@ -39,6 +39,40 @@ export default function App() {
   // Job results
   const [jobResults, setJobResults] = useState([]);
   const [jobError, setJobError] = useState("");
+  const API = import.meta.env.VITE_API_BASE_URL || "";
+
+  //tailor DUMMY 
+  async function handleDummyTailor() {
+  if (!docId) {
+    alert("Upload and parse a resume first (docId is missing).");
+    return;
+  }
+
+  const dummyJobDescription =
+    "We are seeking a Software Engineering Intern with experience in Python, FastAPI, React, REST APIs, and cloud deployment. Strong communication skills and impact-driven work preferred.";
+
+  try {
+    const res = await fetch(`${API}/api/resume/${docId}/tailor`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ job_description: dummyJobDescription }),
+    });
+
+    const data = await res.json();
+
+    if (!res.ok) {
+      console.error("Tailor error:", data);
+      alert(`Tailor failed: ${res.status}`);
+      return;
+    }
+
+    console.log("Tailor success:", data);
+    alert("Dummy tailor worked — check console for response.");
+  } catch (err) {
+    console.error("Tailor request crashed:", err);
+    alert("Tailor request crashed — check console.");
+  }
+}
 
   const gradient = useMemo(
     () =>
@@ -207,7 +241,7 @@ export default function App() {
                 </span>
               ) : (
                 <span className="rounded-full bg-white/50 px-3 py-1">
-                  live backend ✅
+                  live backend 
                 </span>
               )}
             </div>
@@ -242,6 +276,14 @@ export default function App() {
                     type="button"
                   >
                     Choose file
+                  </button>
+
+                  // tailor dummy button 
+                  <button
+                    onClick={handleDummyTailor}
+                    style={{ padding: "10px 14px", borderRadius: 8, marginTop: 12 }}
+                    >
+                    Dummy Tailor Resume
                   </button>
 
                   <button
