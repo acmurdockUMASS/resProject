@@ -1,9 +1,10 @@
-import { useMemo, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import {
   uploadResume,
   parseResume,
   chatResume,
   exportResume,
+  previewResume,
   searchJobs,
   tailorResume,
 } from "./api.js";
@@ -36,6 +37,7 @@ export default function App() {
   const [searching, setSearching] = useState(false);
   const [tailoringJobKey, setTailoringJobKey] = useState(null);
   const [status, setStatus] = useState("");
+  const [previewing, setPreviewing] = useState(false);
 
   const [docId, setDocId] = useState(null);
   const [filename, setFilename] = useState(null);
@@ -57,12 +59,6 @@ export default function App() {
   const [jobError, setJobError] = useState("");
 
   const busy = uploading || chatting || exporting || searching || Boolean(tailoringJobKey);
-
-  const gradient = useMemo(
-    () =>
-      "bg-gradient-to-br from-indigo-500/15 via-fuchsia-500/10 to-sky-500/15",
-    []
-  );
 
   async function handleUpload(file) {
     setUploading(true);
@@ -172,6 +168,57 @@ export default function App() {
     }
   }
 
+  async function handlePreview() {
+    if (!docId) {
+      setStatus("Upload + parse a resume first");
+      window.setTimeout(() => setStatus(""), 2000);
+      return;
+    }
+
+    setPreviewing(true);
+    setStatus("Building preview...");
+
+    try {
+      const data = await previewResume(docId);
+      const jsonText = JSON.stringify(data.resume_json || {}, null, 2);
+      const texText = data.resume_tex || "";
+      const previewWindow = window.open("", "_blank", "noopener,noreferrer");
+
+      if (!previewWindow) {
+        setStatus("Popup blocked. Please allow popups to view preview.");
+        return;
+      }
+
+      previewWindow.document.write(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Resume Preview</title>
+  <style>
+    body { font-family: "Palatino Linotype", serif; margin: 24px; color: #000; background: #f7f1f5; }
+    h1 { margin: 0 0 16px; }
+    h2 { margin: 20px 0 8px; }
+    pre { white-space: pre-wrap; background: #fff; border: 1px solid #d8c3d1; border-radius: 10px; padding: 12px; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <h1>Generated Resume Preview</h1>
+  <h2>resume.tex</h2>
+  <pre>${texText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+  <h2>resume.json</h2>
+  <pre>${jsonText.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</pre>
+</body>
+</html>`);
+      previewWindow.document.close();
+      setStatus("Preview ready ✓");
+    } catch (e) {
+      setStatus(`Preview failed: ${String(e.message || e)}`);
+    } finally {
+      setPreviewing(false);
+      window.setTimeout(() => setStatus(""), 2500);
+    }
+  }
+
   async function handleJobSearch() {
     setJobError("");
     setSearching(true);
@@ -261,14 +308,14 @@ export default function App() {
   }
 
   return (
-    <div className={cx("min-h-screen text-slate-900", gradient)}>
+    <div className="min-h-screen bg-[#f7f1f5] text-black">
       <div className="pointer-events-none fixed inset-0 opacity-40 [background-image:radial-gradient(#ffffff55_1px,transparent_1px)] [background-size:24px_24px]" />
 
       <div className="relative mx-auto max-w-6xl px-5 py-10">
         <header className="mb-8 flex flex-col gap-2">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 shadow-sm" />
+              <div className="h-10 w-10 rounded-2xl bg-[#5f3b66] shadow-sm" />
               <div>
                 <div className="text-xl font-semibold tracking-tight">Seamstress</div>
                 <div className="text-sm text-slate-600">Tailor resumes to fit jobs ✨</div>
@@ -303,7 +350,7 @@ export default function App() {
                 <div className="flex items-center gap-2">
                   <button
                     onClick={() => fileInputRef.current?.click()}
-                    className="rounded-xl bg-slate-900 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-60"
+                    className="rounded-xl bg-[#b784a7] px-3 py-1.5 text-xs font-semibold text-black shadow-sm hover:bg-[#a77398] disabled:opacity-60"
                     disabled={uploading}
                     type="button"
                   >
@@ -311,8 +358,18 @@ export default function App() {
                   </button>
 
                   <button
+                    onClick={handlePreview}
+                    className="rounded-xl bg-[#b784a7] px-3 py-1.5 text-xs font-semibold text-black shadow-sm hover:bg-[#a77398] disabled:opacity-60"
+                    disabled={previewing || !docId}
+                    type="button"
+                    title={!docId ? "Upload + parse a resume first" : "Preview generated resume files"}
+                  >
+                    Preview
+                  </button>
+
+                  <button
                     onClick={handleExport}
-                    className="rounded-xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 px-3 py-1.5 text-xs font-semibold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
+                    className="rounded-xl bg-[#b784a7] px-3 py-1.5 text-xs font-semibold text-black shadow-sm hover:bg-[#a77398] disabled:opacity-60"
                     disabled={exporting || !docId}
                     type="button"
                     title={!docId ? "Upload + parse a resume first" : "Export zip"}
@@ -340,7 +397,7 @@ export default function App() {
                 )}
               >
                 <div className="flex items-start gap-3">
-                  <div className="mt-0.5 h-9 w-9 rounded-2xl bg-gradient-to-br from-sky-500 to-indigo-600" />
+                  <div className="mt-0.5 h-9 w-9 rounded-2xl bg-[#4b0082]" />
                   <div className="flex-1">
                     <div className="text-sm font-semibold">Drop a PDF or DOCX here</div>
                     <div className="text-xs text-slate-600">
@@ -379,7 +436,7 @@ export default function App() {
                     key={idx}
                     className={cx(
                       "max-w-[88%] rounded-2xl px-3 py-2 text-sm shadow-sm",
-                      m.role === "you" ? "ml-auto bg-slate-900 text-white" : "bg-white text-slate-900"
+                      m.role === "you" ? "ml-auto bg-[#b784a7] text-black" : "bg-white text-black"
                     )}
                   >
                     <div className="text-[11px] opacity-70">{m.role === "you" ? "You" : "Taylor"}</div>
@@ -397,12 +454,12 @@ export default function App() {
                       if (e.key === "Enter") sendChat();
                     }}
                     placeholder='Try: "Make bullets more technical" or reply "yes" to apply edits'
-                    className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none ring-1 ring-white/70 focus:ring-2 focus:ring-indigo-400 disabled:opacity-60"
+                    className="w-full rounded-xl bg-white px-3 py-2 text-sm outline-none ring-1 ring-white/70 focus:ring-2 focus:ring-[#8f5d88] disabled:opacity-60"
                     disabled={chatting}
                   />
                   <button
                     onClick={sendChat}
-                    className="rounded-xl bg-gradient-to-br from-indigo-600 to-fuchsia-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:opacity-95 disabled:opacity-60"
+                    className="rounded-xl bg-[#b784a7] px-4 py-2 text-sm font-semibold text-black shadow-sm hover:bg-[#a77398] disabled:opacity-60"
                     disabled={chatting}
                     type="button"
                   >
@@ -442,7 +499,7 @@ export default function App() {
                     value={roleQuery}
                     onChange={(e) => setRoleQuery(e.target.value)}
                     placeholder="e.g., Software Engineering Intern"
-                    className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm outline-none ring-1 ring-white/70 focus:ring-2 focus:ring-indigo-400"
+                    className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm outline-none ring-1 ring-white/70 focus:ring-2 focus:ring-[#8f5d88]"
                   />
                 </div>
 
@@ -457,7 +514,7 @@ export default function App() {
                       setMinSalary(v === "" ? null : Number(v));
                     }}
                     placeholder="e.g., 90000"
-                    className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm outline-none ring-1 ring-white/70 focus:ring-2 focus:ring-indigo-400"
+                    className="mt-1 w-full rounded-xl bg-white px-3 py-2 text-sm outline-none ring-1 ring-white/70 focus:ring-2 focus:ring-[#8f5d88]"
                   />
                 </div>
               </div>
@@ -476,7 +533,7 @@ export default function App() {
                     onClick={() => setMinSalary(b.value)}
                     className={`rounded-xl px-3 py-2 text-xs font-semibold shadow-sm ring-1 ring-white/70 ${
                       minSalary === b.value
-                        ? "bg-gradient-to-br from-indigo-600 to-fuchsia-600 text-white"
+                        ? "bg-[#b784a7] text-black"
                         : "bg-white/80 text-slate-800 hover:bg-white"
                     }`}
                   >
@@ -501,7 +558,7 @@ export default function App() {
                     type="button"
                     onClick={handleJobSearch}
                     disabled={searching || !roleQuery.trim()}
-                    className="rounded-xl bg-slate-900 px-4 py-2 text-xs font-semibold text-white shadow-sm hover:opacity-90 disabled:opacity-60"
+                    className="rounded-xl bg-[#b784a7] px-4 py-2 text-xs font-semibold text-black shadow-sm hover:bg-[#a77398] disabled:opacity-60"
                     title={!roleQuery.trim() ? "Enter a role/title first" : "Search jobs"}
                   >
                     Find matches
@@ -540,7 +597,7 @@ export default function App() {
                         </div>
 
                         {j.salary != null && (
-                          <div className="rounded-xl bg-slate-900 px-3 py-1 text-xs font-semibold text-white">
+                          <div className="rounded-xl bg-[#b784a7] px-3 py-1 text-xs font-semibold text-black">
                             ${String(j.salary)}
                           </div>
                         )}
@@ -552,7 +609,7 @@ export default function App() {
                             href={j.apply_url}
                             target="_blank"
                             rel="noreferrer"
-                            className="rounded-full bg-slate-900 px-3 py-1 text-[11px] font-semibold text-white hover:opacity-90"
+                            className="rounded-full bg-[#b784a7] px-3 py-1 text-[11px] font-semibold text-black hover:bg-[#a77398]"
                           >
                             Apply
                           </a>
@@ -562,7 +619,7 @@ export default function App() {
                           type="button"
                           onClick={() => handleTailorToJob(j)}
                           disabled={!docId || isTailoringThisJob}
-                          className="rounded-full bg-gradient-to-br from-indigo-600 to-fuchsia-600 px-3 py-1 text-[11px] font-semibold text-white hover:opacity-95 disabled:opacity-60"
+                          className="rounded-full bg-[#b784a7] px-3 py-1 text-[11px] font-semibold text-black hover:bg-[#a77398] disabled:opacity-60"
                           title={!docId ? "Upload + parse your resume first" : "Tailor to this job"}
                         >
                           {isTailoringThisJob ? "Tailoring..." : "Tailor to this job"}

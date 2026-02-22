@@ -48,6 +48,14 @@ export async function exportResume(docId) {
   return resp.json(); // { download_url, export_key, ... }
 }
 
+export async function previewResume(docId) {
+  const resp = await fetch(`${API_BASE}/api/resume/${docId}/preview`, {
+    method: "POST",
+  });
+  if (!resp.ok) throw new Error((await resp.text()) || "Preview failed");
+  return resp.json();
+}
+
 export async function searchJobs({ role, min_salary_usd, limit }) {
   const payload = {
     role,
