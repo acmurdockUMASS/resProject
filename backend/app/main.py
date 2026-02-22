@@ -2,10 +2,11 @@ import os
 import uuid
 import json
 import re
+import logging
+import os
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from pydantic import ValidationError
 from fastapi import FastAPI, UploadFile
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
@@ -18,13 +19,13 @@ from .theirstack import search_jobs, map_job
 import io
 import zipfile
 from pathlib import Path
-import re
-from fastapi.middleware.cors import CORSMiddleware
+
 # Load environment variables FIRST
 load_dotenv()
 
 # Create FastAPI app BEFORE decorators
 app = FastAPI()
+logger = logging.getLogger(__name__)
 
 def _parse_allowed_origins() -> List[str]:
         configured = os.getenv("CORS_ALLOWED_ORIGINS", "")
@@ -75,6 +76,33 @@ def _is_affirmative(message: str) -> bool:
 
 def _is_negative(message: str) -> bool:
     return bool(NEGATIVE_RE.search(message.lower()))
+
+
+def _normalize_chat_request(user_message: str) -> str:
+    msg = user_message.strip()
+    if not msg:
+        return msg
+
+    lowered = msg.lower()
+    tokens = re.findall(r"[a-zA-Z']+", lowered)
+    short = len(tokens) <= 3
+
+    if short and any(k in lowered for k in ("bullet", "bullets")):
+        return (
+            "Rewrite all experience and project bullets to be concise, professional, "
+            "and ATS-friendly while preserving facts."
+        )
+    if short and any(k in lowered for k in ("professional", "polish", "improve", "better")):
+        return (
+            "Polish my resume wording across all experience and project bullets without "
+            "adding new facts."
+        )
+    if short and any(k in lowered for k in ("skills", "tech stack", "stack")):
+        return (
+            "Improve my resume skills section wording and organization while keeping all "
+            "existing facts."
+        )
+    return msg
 
 
 
@@ -147,6 +175,7 @@ async def chat_resume(doc_id: str, req: ChatRequest):
     pending_key = f"draft/{doc_id}/pending.json"
 
     user_message = req.message.strip()
+    normalized_user_message = _normalize_chat_request(user_message)
     history: List[Dict[str, str]] = _load_optional_json(history_key) or []
     pending = _load_optional_json(pending_key)
     pending_is_active = bool(pending and pending.get("status") == "pending")
@@ -231,11 +260,12 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "status": "info",
         }
     try:
-        proposal = propose_chat_edits(resume, user_message, history)
-    except Exception as e:
+        proposal = propose_chat_edits(resume, normalized_user_message, history)
+    except Exception:
+        logger.exception("chat proposal failed for doc_id=%s", doc_id)
         # Never crash on user input; return a safe message
         assistant_message = (
-            "I couldn’t process that request yet. Try something like:\n"
+            "I hit a temporary formatting issue while generating your edits. Try again with:\n"
             "- “Rewrite all my experience and project bullets to be more professional.”\n"
             "- “Shorten my bullets to one line each.”\n"
             "- “What should I edit?”"
@@ -424,13 +454,21 @@ async def jobs_search(req: JobSearchRequest):
 # this allows the front end deployer to connect
 from fastapi.middleware.cors import CORSMiddleware
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+def _cors_origins_from_env() -> List[str]:
+    configured = os.getenv("FRONTEND_ORIGINS", "").strip()
+    if configured:
+        origins = [o.strip().rstrip("/") for o in configured.split(",") if o.strip()]
+        if origins:
+            return origins
+    return [
         "http://localhost:5173",
         "http://localhost:3000",
         "https://seamstress-m6lai.ondigitalocean.app",
-    ],
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins_from_env(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

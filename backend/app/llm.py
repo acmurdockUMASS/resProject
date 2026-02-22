@@ -18,6 +18,67 @@ class LLMEditProposal(BaseModel):
     needs_confirmation: bool = True
 
 
+def _strip_fences(text: str) -> str:
+    value = (text or "").strip()
+    if value.startswith("```"):
+        parts = value.split("```")
+        value = parts[1].strip() if len(parts) > 1 else value
+        if value.lower().startswith("json"):
+            value = value[4:].strip()
+    return value
+
+
+def _extract_json_object(text: str) -> str:
+    """
+    Pull the outermost JSON object from noisy model output.
+    Keeps strict schema validation later via Pydantic.
+    """
+    s = _strip_fences(text)
+    if not s:
+        raise ValueError("empty response")
+    if s.startswith("{") and s.endswith("}"):
+        return s
+
+    start = s.find("{")
+    if start < 0:
+        raise ValueError("no json object in response")
+
+    depth = 0
+    in_string = False
+    escaped = False
+    end = -1
+    for i, ch in enumerate(s[start:], start=start):
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+
+    if end < 0:
+        raise ValueError("unterminated json object in response")
+    return s[start : end + 1]
+
+
+def _parse_proposal_response(raw_text: str) -> LLMEditProposal:
+    payload = _extract_json_object(raw_text)
+    proposal = LLMEditProposal.model_validate_json(payload)
+    Resume.model_validate(proposal.proposed_resume)
+    return proposal
+
+
 def _build_parse_prompt(raw_text: str, seed_resume: Dict[str, Any]) -> str:
     """
     Gemini should extract resume content into the Resume JSON schema.
@@ -235,15 +296,8 @@ def parse_resume_with_llm(raw_text: str, seed_resume: Dict[str, Any]) -> Resume:
         ),
     )
 
-    text = (resp.text or "").strip()
-
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1].strip() if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-
-    data: Any = json.loads(text)
+    payload = _extract_json_object(resp.text or "")
+    data: Any = json.loads(payload)
     return Resume.model_validate(data)
 
 
@@ -267,15 +321,6 @@ def propose_chat_edits(
 
     model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
-
-    def _strip_fences(s: str) -> str:
-        s = (s or "").strip()
-        if s.startswith("```"):
-            parts = s.split("```")
-            s = parts[1].strip() if len(parts) > 1 else s
-            if s.lower().startswith("json"):
-                s = s[4:].strip()
-        return s
 
     def _retry_prompt(previous_output: str, base_prompt: str) -> str:
         return f"""
@@ -304,12 +349,10 @@ Original instructions:
         ),
     )
 
-    text1 = _strip_fences(resp1.text or "")
+    text1 = resp1.text or ""
 
     try:
-        proposal = LLMEditProposal.model_validate_json(text1)
-        Resume.model_validate(proposal.proposed_resume)
-        return proposal
+        return _parse_proposal_response(text1)
     except ValidationError:
         # fall through to retry
         pass
@@ -329,12 +372,10 @@ Original instructions:
         ),
     )
 
-    text2 = _strip_fences(resp2.text or "")
+    text2 = resp2.text or ""
 
     try:
-        proposal2 = LLMEditProposal.model_validate_json(text2)
-        Resume.model_validate(proposal2.proposed_resume)
-        return proposal2
+        return _parse_proposal_response(text2)
     except Exception:
         # --- Final safe fallback (no crash, no loop) ---
         return LLMEditProposal(
@@ -366,7 +407,21 @@ def propose_job_tailored_edits(
     client = genai.Client(api_key=api_key)
     prompt = _build_job_tailor_prompt(resume.model_dump(), job_description)
 
-    resp = client.models.generate_content(
+    def _retry_prompt(previous_output: str, base_prompt: str) -> str:
+        return f"""
+You returned invalid JSON.
+
+Return ONLY valid JSON that matches the required response schema EXACTLY.
+No markdown. No commentary. No extra keys.
+
+Fix your previous output into valid JSON:
+{previous_output}
+
+Original instructions:
+{base_prompt}
+""".strip()
+
+    resp1 = client.models.generate_content(
         model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -376,27 +431,31 @@ def propose_job_tailored_edits(
         ),
     )
 
-    text = (resp.text or "").strip()
+    text1 = resp1.text or ""
+    try:
+        return _parse_proposal_response(text1)
+    except Exception:
+        pass
 
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1].strip() if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-
-    proposal = LLMEditProposal.model_validate_json(text)
-    Resume.model_validate(proposal.proposed_resume)
-    return proposal
-def _build_chat_retry_prompt(raw_output: str, base_prompt: str) -> str:
-    return f"""
-You returned invalid JSON.
-
-You MUST now return ONLY valid JSON that matches the required response schema EXACTLY.
-No markdown. No commentary. No extra keys.
-
-Here is your previous output (DO NOT repeat it verbatim; fix it into valid JSON):
-{raw_output}
-
-Original instructions:
-{base_prompt}
-""".strip()
+    resp2 = client.models.generate_content(
+        model=model,
+        contents=_retry_prompt(text1, prompt),
+        config=types.GenerateContentConfig(
+            temperature=0.0,
+            max_output_tokens=4096,
+            response_mime_type="application/json",
+        ),
+    )
+    text2 = resp2.text or ""
+    try:
+        return _parse_proposal_response(text2)
+    except Exception:
+        return LLMEditProposal(
+            assistant_message=(
+                "I tailored your resume to this job description and prepared safe edits, "
+                "but formatting failed this time. Please retry once to regenerate."
+            ),
+            edits_summary=[],
+            proposed_resume=resume.model_dump(),
+            needs_confirmation=False,
+        )
