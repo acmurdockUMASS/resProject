@@ -12,7 +12,7 @@ function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }
 
-const AFFIRM_HINTS = ["yes", "yep", "okay", "go ahead", "confirm"];
+const AFFIRM_HINTS = ["yes", "no", "confirm", ];
 
 function buildJobDescription(job) {
   return [
@@ -44,7 +44,7 @@ export default function App() {
     {
       role: "taylor",
       content:
-        "Hi! I’m Taylor ✂️ Upload your resume (PDF/DOCX), then tell me what you want changed.",
+        "Hi! I’m Taylor  Upload your resume (PDF/DOCX), then tell me what you want changed.",
     },
   ]);
   const [chatInput, setChatInput] = useState("");
