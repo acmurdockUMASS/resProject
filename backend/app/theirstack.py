@@ -52,7 +52,7 @@ async def search_jobs(
     }
 
     if country:
-        payload["job_country_or"] = [country]
+        payload["job_country"] = country
 
     if min_salary_usd is not None:
         payload["min_salary_usd"] = min_salary_usd
@@ -60,8 +60,8 @@ async def search_jobs(
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
             f"{THEIRSTACK_BASE}/v1/jobs/search",
-            headers=_auth_headers(),
-            json=payload,
+        headers=_auth_headers(),
+        json=payload,
     )
 
     if r.status_code >= 400:
