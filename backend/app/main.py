@@ -1,7 +1,6 @@
 import uuid
 import json
 import re
-import difflib
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -27,20 +26,9 @@ app = FastAPI()
 
 
 AFFIRMATIVE_RE = re.compile(r"\b(yes|yep|yeah|yup|sure|ok|okay|please do|go ahead|sounds good|confirm)\b")
-NEGATIVE_RE = re.compile(r"\b(no+|nope|nah+h*|don't|do not|stop|cancel|never mind|nevermind)\b")
+NEGATIVE_RE = re.compile(r"\b(no|nope|nah|don't|do not|stop|cancel|never mind|nevermind)\b")
 NO_CHANGE_RE = re.compile(
     r"\b(nothing|no changes|looks good|looks fine|it's fine|its fine|leave it|as is|don't change|do not change|just export|all set)\b",
-    re.IGNORECASE,
-)
-COACHING_RE = re.compile(
-    r"\b(what should i edit|what should i change|what do i edit|what do i change|what should i fix|any suggestions|suggestions\?|help me edit|what should i improve|what do you recommend)\b",
-    re.IGNORECASE,
-)
-WORD_RE = re.compile(r"[a-zA-Z']+")
-UNCERTAINTY_TOKENS = ("idk", "dont", "don't", "dunno", "unsure", "not", "know", "sure")
-EDIT_TOKENS = ("edit", "change", "improve", "fix", "update", "revise", "rewrite", "suggest", "recommend")
-THERAPY_RE = re.compile(
-    r"\b(therapy|therapist|counselor|counselling|counseling|depressed|depression|anxiety|panic|suicid|self-harm|self harm|trauma|ptsd|mental health|grief)\b",
     re.IGNORECASE,
 )
 def _is_no_change(message: str) -> bool:
@@ -67,36 +55,6 @@ def _is_affirmative(message: str) -> bool:
 
 def _is_negative(message: str) -> bool:
     return bool(NEGATIVE_RE.search(message.lower()))
-
-
-def _is_therapy_request(message: str) -> bool:
-    return bool(THERAPY_RE.search(message))
-
-
-def _is_coaching_request(message: str) -> bool:
-    if COACHING_RE.search(message):
-        return True
-
-    tokens = [m.group(0).lower() for m in WORD_RE.finditer(message)]
-    if not tokens:
-        return False
-
-    def _is_similar(token: str, target: str, threshold: float = 0.75) -> bool:
-        return difflib.SequenceMatcher(None, token, target).ratio() >= threshold
-
-    def _matches_any(token: str, candidates: tuple[str, ...]) -> bool:
-        return any(_is_similar(token, candidate) for candidate in candidates)
-
-    has_uncertainty = any(_matches_any(token, UNCERTAINTY_TOKENS) for token in tokens)
-    has_edit_intent = any(_matches_any(token, EDIT_TOKENS) for token in tokens)
-
-    if has_uncertainty and has_edit_intent:
-        return True
-
-    if "?" in message and has_edit_intent:
-        return True
-
-    return False
 
 
 
@@ -253,65 +211,16 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "status": "info",
         }
 
-    if _is_therapy_request(user_message):
-        assistant_message = (
-            "I’m here to help with resume edits and job prep, and I can’t do therapy. "
-            "If you’re going through a tough time, consider reaching out to a trusted person "
-            "or a professional. Want to keep working on your resume?"
-        )
-        history.extend(
-            [
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": assistant_message},
-            ]
-        )
-        _save_json(history_key, history)
-        return {
-            "doc_id": doc_id,
-            "source_key": source_key,
-            "resume": resume.model_dump(),
-            "assistant_message": assistant_message,
-            "edits_summary": [],
-            "needs_confirmation": False,
-            "status": "info",
-        }
-
-    if _is_coaching_request(user_message):
-        assistant_message = (
-            "Absolutely — here are a few common, high-impact edits to consider:\n"
-            "1) Strengthen bullet impact with action verbs and outcomes\n"
-            "2) Tighten the summary or headline to match your target role\n"
-            "3) Reorder experience/projects to highlight the most relevant work\n"
-            "4) Clean up skills to remove duplicates and group by category\n"
-            "Which area should I focus on first?"
-        )
-        history.extend(
-            [
-                {"role": "user", "content": user_message},
-                {"role": "assistant", "content": assistant_message},
-            ]
-        )
-        _save_json(history_key, history)
-        return {
-            "doc_id": doc_id,
-            "source_key": source_key,
-            "resume": resume.model_dump(),
-            "assistant_message": assistant_message,
-            "edits_summary": [],
-            "needs_confirmation": False,
-            "status": "info",
-        }
-
     try:
         proposal = propose_chat_edits(resume, user_message, history)
     except Exception as e:
         # Never crash on user input; return a safe, judge-friendly message.
         assistant_message = (
-            "I can help — tell me what you want to improve. For example:\n"
+            "I couldn’t process that request in edit-mode yet. "
+            "Try a specific instruction like:\n"
             "- “Make my bullets more professional”\n"
             "- “Rewrite my Quantiphi bullets to be more impact-focused”\n"
-            "- “Shorten my project bullets to 1 line each”\n"
-            "Or ask: “What should I edit?” and I’ll suggest options."
+            "- “Shorten my project bullets to 1 line each”"
         )
 
         history.extend(
@@ -331,7 +240,6 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "needs_confirmation": False,
             "status": "info",
         }
-    assistant_message = proposal.assistant_message
     history.extend(
         [
             {"role": "user", "content": user_message},
