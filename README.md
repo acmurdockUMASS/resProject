@@ -1,5 +1,5 @@
 # resProject
-Repository for HackHer 2026 project 
+Repository for HackHer 2026 project Seamstress!
 Perfect. Here is a **single clean copy-paste block** you can drop directly into your `README.md`.
 
 ---
