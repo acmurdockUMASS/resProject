@@ -192,21 +192,23 @@ def propose_chat_edits(
         config=types.GenerateContentConfig(
             temperature=0.2,
             max_output_tokens=4096,
+            response_mime_type="application/json",
         ),
     )
 
     text = (resp.text or "").strip()
 
-    # If Gemini adds code fences, strip them
+    text = (resp.text or "").strip()
+
+    # still strip fences just in case (usually unnecessary once schema enforced)
     if text.startswith("```"):
         parts = text.split("```")
         text = parts[1].strip() if len(parts) > 1 else text
         if text.lower().startswith("json"):
             text = text[4:].strip()
 
-    data: Any = json.loads(text)
-    proposal = LLMEditProposal.model_validate(data)
-
+    # Validate directly
+    proposal = LLMEditProposal.model_validate_json(text)
     # Ensure proposed resume still validates against the schema
     Resume.model_validate(proposal.proposed_resume)
     return proposal
