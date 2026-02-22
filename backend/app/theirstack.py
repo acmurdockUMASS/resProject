@@ -1,7 +1,8 @@
 import os
 from typing import Any, Dict, List, Optional
 
-import httpx
+import httpx 
+from fastapi import HTTPException
 
 THEIRSTACK_BASE = "https://api.theirstack.com"
 
@@ -61,9 +62,14 @@ async def search_jobs(
             f"{THEIRSTACK_BASE}/v1/jobs/search",
             headers=_auth_headers(),
             json=payload,
-        )
-        r.raise_for_status()
-        data = r.json()
+    )
+
+    if r.status_code >= 400:
+        # show TheirStack's exact error instead of generic 500
+        detail = r.text
+        raise HTTPException(status_code=r.status_code, detail=detail)
+
+    data = r.json()
 
     jobs = data.get("data") if isinstance(data, dict) else None
     if jobs is None:
