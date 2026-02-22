@@ -19,71 +19,90 @@ class LLMEditProposal(BaseModel):
 
 
 def _build_parse_prompt(raw_text: str, seed_resume: Dict[str, Any]) -> str:
-        """
-        Gemini should extract resume content into the Resume JSON schema.
-        It must return ONLY JSON matching the Resume schema below.
-        """
-        return f"""
+    """
+    Gemini should extract resume content into the Resume JSON schema.
+    It must return ONLY JSON matching the Resume schema below.
+    """
+    schema = {
+        "header": {
+            "name": "",
+            "email": "",
+            "phone": "",
+            "linkedin": "",
+            "github": "",
+            "portfolio": "",
+            "location": ""
+        },
+        "education": [
+            {"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}
+        ],
+        "skills": {
+            "languages": [],
+            "frameworks": [],
+            "tools": [],
+            "concepts": [],
+            # IMPORTANT: make this a dict to match your “heading as key” rule
+            "categories": {}
+        },
+        "experience": [
+            {"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}
+        ],
+        "projects": [
+            {"name": "", "link": "", "stack": [], "start": "", "end": "", "bullets": []}
+        ],
+        "leadership": [
+            {"org": "", "title": "", "start": "", "end": "", "bullets": []}
+        ],
+        "awards": []
+    }
+
+    return f"""
 Return ONLY valid JSON. No markdown. No commentary.
 
+You will be given:
+1) SEED_RESUME_JSON already extracted from the resume.
+2) RAW_RESUME_TEXT (raw text from the resume).
 
-You will be given a SEED_RESUME_JSON already extracted from the resume.
-Your job is to PRESERVE all existing data in SEED_RESUME_JSON and fill missing fields
-by extracting from RAW_RESUME_TEXT. Do NOT remove or overwrite existing non-empty values
-unless the raw text explicitly corrects them.
+Your job:
+- PRESERVE all existing data in SEED_RESUME_JSON.
+- Fill missing/empty fields by extracting from RAW_RESUME_TEXT.
+- Do NOT remove or overwrite existing non-empty values
+  unless RAW_RESUME_TEXT explicitly corrects them.
 
-If the user asks for a broad improvement like "make it professional", "polish it", "improve it",
-you MUST propose edits across ALL experience + project bullets (rewrite wording only, no new facts).
-Do NOT ask what to improve in that case.
-Set needs_confirmation=true and provide edits_summary.
+If the user asks for a broad improvement like "make it professional", "polish it", "improve it":
+- Propose rewrites across ALL experience + project bullets (rewrite wording only, no new facts).
+- Set needs_confirmation=true
+- Provide edits_summary (strings describing what you changed)
 
-Map any extra resume information into the closest matching field so the final output
-matches this JSON schema:
-{{
-    "header": {{
-        "name": "",
-        "email": "",
-        "phone": "",
-        "linkedin": "",
-        "github": "",
-        "portfolio": "",
-        "location": ""
-    }},
-    "education": [
-        {{"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}}
-    ],
-    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": [], "categories":[]}}
-    ],
-    "experience": [
-        {{"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}}
-    ],
-    "projects": [
-        {{"name": "", "link": "", "stack": [], "start": "", "end": "", "bullets": []}}
-    ],
-    "leadership": [
-        {{"org": "", "title": "", "start": "", "end": "", "bullets": []}}
-    ],
-    "awards": []
-}}
+Output must EXACTLY match this JSON schema (same keys, correct types):
+{json.dumps(schema, indent=2)}
 
 Rules:
 - Do NOT invent employers, schools, titles, dates, locations, metrics, links, or awards.
-- If a field is missing in the resume, use "" or [] as appropriate.
+- If a field is missing, use "" or [] or {{}} as appropriate.
 - Split bullets into concise action-oriented statements.
-- Preserve original meaning; paraphrase only if necessary for clarity.
-- If you are unsure, leave the field empty.
--- Skills parsing rule:
-  If skills are grouped under custom headings (e.g., "Laboratory:", "Software and Analytical:", "Professional:"),
-  put them in skills.categories with the heading as the key and an array of the listed items as the value.
-- If a resume section does not match the schema exactly, map it to the closest section.
-    For example: certifications -> awards, activities -> leadership, relevant coursework -> education.coursework.
+- Preserve original meaning; paraphrase only for clarity.
+- If unsure, leave empty.
 
-    SEED_RESUME_JSON:
-    {json.dumps(seed_resume, indent=2)}
+Skills parsing rule:
+- If skills are grouped under custom headings (e.g., "Laboratory:", "Software and Analytical:", "Professional:"),
+  store them in skills.categories as a JSON object:
+  {{
+    "Laboratory": ["Skill1", "Skill2"],
+    "Software and Analytical": ["SkillA"]
+  }}
 
-    RAW_RESUME_TEXT:
-    {raw_text}
-    """.strip()
+If a resume section does not match the schema exactly, map it to the closest section:
+- certifications -> awards
+- activities -> leadership
+- relevant coursework -> education.coursework
+
+SEED_RESUME_JSON:
+{json.dumps(seed_resume, indent=2)}
+
+RAW_RESUME_TEXT:
+{raw_text}
+""".strip()
 
 
 def _build_chat_prompt(
@@ -91,63 +110,60 @@ def _build_chat_prompt(
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
+    """
+    Gemini should propose edits to an existing Resume JSON.
+    Must return ONLY JSON matching LLMEditProposal shape:
+    {
+      "assistant_message": "...",
+      "edits_summary": ["..."],
+      "proposed_resume": { ... Resume JSON ... },
+      "needs_confirmation": true/false
+    }
+    """
+    history = history or []
 
-    history_block = ""
-    if history:
-        turns = history[-8:]
-        history_block = "\n\nCHAT_HISTORY:\n" + "\n".join(
-            f'{t["role"].upper()}: {t["content"]}' for t in turns
-        )
+    # Make history deterministic + safe
+    history_lines: List[str] = []
+    for turn in history[-12:]:  # keep it short
+        role = (turn.get("role") or "").strip().lower()
+        content = (turn.get("content") or "").strip()
+        if not content:
+            continue
+        if role not in ("user", "assistant"):
+            role = "user"
+        history_lines.append(f"{role.upper()}: {content}")
+
+    history_block = "\n".join(history_lines) if history_lines else "NONE"
 
     return f"""
-Return ONLY valid JSON.
-No markdown.
-No commentary.
-No explanations outside JSON.
-You MUST include ALL required keys.
+Return ONLY valid JSON. No markdown. No commentary.
 
-You are a resume editing assistant.
+You are editing an existing resume represented as JSON (RESUME_JSON).
+You must produce an edit proposal in this exact shape:
 
-CRITICAL:
-You must ALWAYS return a JSON object with EXACTLY these keys:
-- assistant_message (string)
-- edits_summary (array of strings)
-- proposed_resume (full resume JSON object)
-- needs_confirmation (boolean)
+{{
+  "assistant_message": "brief explanation of what you changed and why",
+  "edits_summary": ["short bullet-like strings describing changes"],
+  "proposed_resume": <RESUME_JSON with edits applied>,
+  "needs_confirmation": true
+}}
 
-If asking a question:
-- edits_summary MUST be []
-- proposed_resume MUST equal CURRENT_RESUME_JSON exactly
-- needs_confirmation MUST be false
+Rules:
+- Do NOT invent facts (companies, titles, dates, metrics, links).
+- You MAY rewrite bullets for clarity, impact, concision, and professionalism WITHOUT adding new facts.
+- Preserve structure and keys.
+- Only change fields relevant to the user's request.
+- If the request is broad ("polish", "make professional", "improve"), rewrite ALL experience + project bullets.
+- Default needs_confirmation=true unless user explicitly asked for an automatic rewrite and no factual risk exists.
 
-If making edits:
-- edits_summary MUST contain 3-7 short bullet descriptions
-- proposed_resume MUST be the FULL modified resume JSON
-- needs_confirmation MUST be true
+Conversation history:
+{history_block}
 
-If user says something broad like:
-"bullets"
-"make it professional"
-"polish it"
-"improve it"
-
-You MUST interpret that as:
-Rewrite ALL experience + project bullets to be more professional.
-Do NOT ask which bullets.
-Do NOT ask what to improve.
-Propose edits.
-
-Do NOT invent employers, dates, metrics, or links.
-
-If CURRENT_RESUME_JSON.header.name is empty:
-Ask for the name before editing.
-
-CURRENT_RESUME_JSON:
+Current RESUME_JSON:
 {json.dumps(resume_json, indent=2)}
 
-USER_MESSAGE:
+User request:
 {user_message}
-{history_block}
 """.strip()
 
 def _build_job_tailor_prompt(
