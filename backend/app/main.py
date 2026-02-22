@@ -7,7 +7,8 @@ import os
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
 from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult, JobSearchRequest
@@ -37,7 +38,13 @@ def _parse_allowed_origins() -> List[str]:
         "http://127.0.0.1:5173",
         "https://seamstress-m6lai.ondigitalocean.app",
     ]
-
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_parse_allowed_origins(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+        )
 
 AFFIRMATIVE_RE = re.compile(
     r"\b(yes|yep|yeah|yup|sure|ok|okay|please do|go ahead|sounds good|confirm|apply it|do it|looks great)\b",
@@ -379,9 +386,17 @@ async def export_resume(doc_id: str):
         raw = get_object_bytes(draft_key)
         source_key = draft_key
     except Exception:
-        raw = get_object_bytes(parsed_key)
-        source_key = parsed_key
-
+        try:
+            raw = get_object_bytes(parsed_key)
+            source_key = parsed_key
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404,
+                detail=(
+                    "No parsed resume found for this document. Upload and parse a resume "
+                    "before exporting."
+                ),
+            ) from exc
     resume_json = json.loads(raw.decode("utf-8", errors="replace"))
 
     template_path = Path(__file__).parent / "latex" / "template.tex"
@@ -473,10 +488,3 @@ def _cors_origins_from_env() -> List[str]:
         "https://seamstress-m6lai.ondigitalocean.app",
     ]
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=_cors_origins_from_env(),
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
