@@ -4,15 +4,16 @@ import re
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
-from fastapi import FastAPI, UploadFile
+from fastapi import FastAPI, HTTPException, UploadFile
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
 from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult, JobSearchRequest
 from .resume_schema import Resume
 from .parser import parse_resume_text
 from .llm import propose_chat_edits, propose_job_tailored_edits
+from .llm import propose_chat_edits, propose_job_tailored_edits
 from .render import render_resume_to_latex
-from .theirstack import search_jobs, map_job
+from .theirstack import search_jobs, map_job, search_companies_technographics
 import io
 import zipfile
 from pathlib import Path
@@ -228,13 +229,25 @@ async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
         raw = get_object_bytes(draft_key)
         source_key = draft_key
     except Exception:
-        raw = get_object_bytes(parsed_key)
-        source_key = parsed_key
+        try:
+            raw = get_object_bytes(parsed_key)
+            source_key = parsed_key
+        except Exception as exc:
+            raise HTTPException(
+                status_code=404,
+                detail="Resume not found for this doc_id. Upload and parse a resume before tailoring.",
+            ) from exc
 
     parsed_json = json.loads(raw.decode("utf-8", errors="replace"))
     resume = Resume.model_validate(parsed_json)
 
-    proposal = propose_job_tailored_edits(resume, job_description)
+    try:
+        proposal = propose_job_tailored_edits(resume, job_description)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="Unable to generate a complete tailored resume response from Gemini. Please try again.",
+        ) from exc
 
     _save_json(
         pending_key,
@@ -344,17 +357,98 @@ async def jobs_search(req: JobSearchRequest):
     return JobSearchResponse(role=req.role, results=results)
 
 
-# this allows the front end deployer to connect
-from fastapi.middleware.cors import CORSMiddleware
+@app.post("/api/resume/{doc_id}/job-match")
+async def job_match_from_resume(doc_id: str):
+    draft_key = f"draft/{doc_id}/resume.json"
+    parsed_key = f"parsed/{doc_id}/resume.json"
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://localhost:3000",
-        "https://seamstress-m6lai.ondigitalocean.app",
-    ],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+    try:
+        raw = get_object_bytes(draft_key)
+        source_key = draft_key
+    except Exception:
+        raw = get_object_bytes(parsed_key)
+        source_key = parsed_key
+
+    resume = Resume.model_validate(json.loads(raw.decode("utf-8", errors="replace")))
+
+    skills: List[str] = []
+    skills.extend(resume.skills.languages)
+    skills.extend(resume.skills.frameworks)
+    skills.extend(resume.skills.tools)
+    skills.extend(resume.skills.concepts)
+    for _, grouped in resume.skills.categories.items():
+        skills.extend(grouped)
+    for project in resume.projects:
+        skills.extend(project.stack)
+
+    normalized_skills: List[str] = []
+    seen = set()
+    for skill in skills:
+        cleaned = skill.strip()
+        key = cleaned.lower()
+        if cleaned and key not in seen:
+            seen.add(key)
+            normalized_skills.append(cleaned)
+
+    top_skills = normalized_skills[:12]
+    if not top_skills:
+        return {
+            "doc_id": doc_id,
+            "source_key": source_key,
+            "skills_used": [],
+            "recommended_jobs": [],
+            "message": "No skills found on resume to run company/job matching.",
+        }
+
+    companies = await search_companies_technographics(technologies=top_skills, limit=40)
+    company_names = {
+        (c.get("name") or c.get("company_name") or "").strip().lower()
+        for c in companies
+        if isinstance(c, dict) and ((c.get("name") or c.get("company_name") or "").strip())
+    }
+
+    query_terms = top_skills[:3] or ["software engineer"]
+    raw_jobs: List[Dict[str, Any]] = []
+    seen_job_ids = set()
+    for term in query_terms:
+        jobs = await search_jobs(query=term, limit=40)
+        for job in jobs:
+            job_id = str(job.get("id") or job.get("job_id") or "")
+            if job_id and job_id in seen_job_ids:
+                continue
+            if job_id:
+                seen_job_ids.add(job_id)
+            raw_jobs.append(job)
+
+    mapped = [map_job(j) for j in raw_jobs]
+
+    def _score(job: Dict[str, Any]) -> int:
+        text = f"{job.get('job_title','')} {job.get('description','') or ''}".lower()
+        score = sum(1 for skill in top_skills if skill.lower() in text)
+        if (job.get("company") or "").strip().lower() in company_names:
+            score += 4
+        return score
+
+    ranked = sorted(mapped, key=_score, reverse=True)
+    recommended_jobs = []
+    for job in ranked:
+        score = _score(job)
+        if score <= 0:
+            continue
+        recommended_jobs.append(
+            {
+                "job": job,
+                "match_score": score,
+                "recommendation": "Recommended: tailor your resume for this listing and apply.",
+            }
+        )
+        if len(recommended_jobs) >= 10:
+            break
+
+    return {
+        "doc_id": doc_id,
+        "source_key": source_key,
+        "skills_used": top_skills,
+        "matched_company_count": len(company_names),
+        "recommended_jobs": recommended_jobs,
+    }

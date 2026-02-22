@@ -275,24 +275,31 @@ def propose_job_tailored_edits(
     client = genai.Client(api_key=api_key)
     prompt = _build_job_tailor_prompt(resume.model_dump(), job_description)
 
-    resp = client.models.generate_content(
-        model=model,
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            temperature=0.2,
-            max_output_tokens=4096,
-            response_mime_type="application/json",
-        ),
-    )
+    last_error: Optional[Exception] = None
+    for token_budget in (8192, 12288):
+        resp = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                temperature=0.2,
+                max_output_tokens=token_budget,
+                response_mime_type="application/json",
+            ),
+        )
 
-    text = (resp.text or "").strip()
+        text = (resp.text or "").strip()
 
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1].strip() if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
+        if text.startswith("```"):
+            parts = text.split("```")
+            text = parts[1].strip() if len(parts) > 1 else text
+            if text.lower().startswith("json"):
+                text = text[4:].strip()
 
-    proposal = LLMEditProposal.model_validate_json(text)
-    Resume.model_validate(proposal.proposed_resume)
-    return proposal
+        try:
+            proposal = LLMEditProposal.model_validate_json(text)
+            Resume.model_validate(proposal.proposed_resume)
+            return proposal
+        except Exception as exc:
+            last_error = exc
+
+    raise RuntimeError("Gemini returned an invalid or truncated tailoring response.") from last_error

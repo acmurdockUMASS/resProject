@@ -88,6 +88,55 @@ async def search_jobs(
     return jobs
 
 
+def _extract_company_name(company: Dict[str, Any]) -> str:
+    name = company.get("name") or company.get("company_name")
+    if isinstance(name, str):
+        return name.strip()
+    return ""
+
+
+async def search_companies_technographics(*, technologies: List[str], limit: int = 25) -> List[Dict[str, Any]]:
+    """
+    Query TheirStack technographics endpoint for companies using resume skills/technologies.
+    Tries a couple of payload shapes for compatibility.
+    """
+    if not technologies:
+        return []
+
+    techs = [t.strip() for t in technologies if isinstance(t, str) and t.strip()]
+    if not techs:
+        return []
+
+    payload_candidates = [
+        {"limit": limit, "technologies_or": techs},
+        {"limit": limit, "technographics_or": techs},
+        {"limit": limit, "technologies": techs},
+    ]
+
+    last_error: Optional[httpx.Response] = None
+    async with httpx.AsyncClient(timeout=30) as client:
+        for payload in payload_candidates:
+            r = await client.post(
+                f"{THEIRSTACK_BASE}/v1/companies/technographics_v1",
+                headers=_auth_headers(),
+                json=payload,
+            )
+            if r.status_code < 400:
+                data = r.json()
+                companies = None
+                if isinstance(data, dict):
+                    companies = data.get("data") or data.get("companies") or data.get("results")
+                if not companies:
+                    return []
+                return companies
+            last_error = r
+
+    if last_error is not None:
+        raise HTTPException(status_code=last_error.status_code, detail=last_error.text)
+
+    return []
+
+
 def _company_name(job: Dict[str, Any]) -> str:
     """
     Extracts company name safely from various formats.
