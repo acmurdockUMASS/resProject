@@ -259,14 +259,43 @@ async def export_resume(doc_id: str):
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchRequest):
+    # TheirStack currently only supports filtering by role/title + salary (+ other internal fields),
+    # and will reject unknown fields like `location`. So we:
+    # 1) Fetch jobs using supported filters
+    # 2) Apply location filtering locally on the returned results
+
+    # Pull more than `req.limit` so local filtering still has enough results
+    fetch_limit = min(max(req.limit * 5, req.limit), 100)
+
     raw_jobs = await search_jobs(
         query=req.role,
-        location=req.location,
         min_salary_usd=req.min_salary_usd,
-        limit=req.limit,
+        limit=fetch_limit,
     )
 
     mapped = [map_job(j) for j in raw_jobs]
+
+    # Local location filter (expects canonical "City, ST" from JobSearchRequest validator)
+    if req.location:
+        want_city, want_state = [p.strip() for p in req.location.split(",", 1)]
+        want_city_l = want_city.lower()
+        want_state_u = want_state.upper()
+
+        state_pat = re.compile(rf"\b{re.escape(want_state_u)}\b")
+
+        def _loc_matches(job_loc: str) -> bool:
+            loc = (job_loc or "").strip()
+            if not loc:
+                return False
+            loc_l = loc.lower()
+            loc_u = loc.upper()
+            return (want_city_l in loc_l) and (state_pat.search(loc_u) is not None)
+
+        mapped = [j for j in mapped if _loc_matches(j.get("location") or "")]
+
+    # Enforce final limit after local filtering
+    mapped = mapped[: req.limit]
+
 
     results = [
         JobResult(
