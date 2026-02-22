@@ -8,7 +8,7 @@ import {
   searchJobs,
   tailorResume,
 } from "./api.js";
-
+//commment
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }

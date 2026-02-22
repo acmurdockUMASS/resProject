@@ -1,5 +1,5 @@
 const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
-
+//comment
 async function safeJson(resp) {
   const text = await resp.text();
   try {
