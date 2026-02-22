@@ -278,7 +278,6 @@ export default function App() {
                     Choose file
                   </button>
 
-                  // tailor dummy button 
                   <button
                     onClick={handleDummyTailor}
                     style={{ padding: "10px 14px", borderRadius: 8, marginTop: 12 }}
