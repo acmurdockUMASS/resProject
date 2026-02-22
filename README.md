@@ -69,29 +69,7 @@ pip install --upgrade pip
 
 These are required for DigitalOcean Spaces file storage.
 
-### Mac / Linux
 
-```bash
-export DO_SPACES_KEY="your_key"
-export DO_SPACES_SECRET="your_secret"
-export DO_SPACES_REGION="nyc3"
-export DO_SPACES_BUCKET="your_bucket"
-export DO_SPACES_ENDPOINT="https://nyc3.digitaloceanspaces.com"
-```
-
-### Windows (PowerShell)
-
-```powershell
-setx DO_SPACES_KEY "your_key"
-setx DO_SPACES_SECRET "your_secret"
-setx DO_SPACES_REGION "nyc3"
-setx DO_SPACES_BUCKET "your_bucket"
-setx DO_SPACES_ENDPOINT "https://nyc3.digitaloceanspaces.com"
-```
-
-If using `setx`, restart your terminal afterward.
-
----
 
 ## 5. Run the backend server
 
@@ -153,3 +131,16 @@ CTRL + C
 * Or: `.venv\Scripts\Activate.ps1` (Windows)
 
 ---
+
+FRONT END FRONT END 
+
+cd frontend
+
+npm install 
+
+if .env.example does not exist in frontend folder (NOT IN SRC) create it and just add this line VITE_API_BASE_URL=https://seamstress-m6lai.ondigitalocean.app
+
+npm run dev 
+
+open the url http://localhost:5173/
+

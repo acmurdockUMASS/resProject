@@ -342,3 +342,19 @@ async def jobs_search(req: JobSearchRequest):
     ]
 
     return JobSearchResponse(role=req.role, results=results)
+
+
+# this allows the front end deployer to connect
+from fastapi.middleware.cors import CORSMiddleware
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://seamstress-m6lai.ondigitalocean.app",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
