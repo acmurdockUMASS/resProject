@@ -78,12 +78,12 @@ Rules:
 - If a resume section does not match the schema exactly, map it to the closest section.
     For example: certifications -> awards, activities -> leadership, relevant coursework -> education.coursework.
 
-SEED_RESUME_JSON:
-{json.dumps(seed_resume, indent=2)}
+    SEED_RESUME_JSON:
+    {json.dumps(seed_resume, indent=2)}
 
-RAW_RESUME_TEXT:
-{raw_text}
-""".strip()
+    RAW_RESUME_TEXT:
+    {raw_text}
+    """.strip()
 
 
 def _build_chat_prompt(
