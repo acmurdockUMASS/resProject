@@ -1,3 +1,4 @@
+import os
 import uuid
 import json
 import re
@@ -18,11 +19,23 @@ import io
 import zipfile
 from pathlib import Path
 import re
+from fastapi.middleware.cors import CORSMiddleware
 # Load environment variables FIRST
 load_dotenv()
 
 # Create FastAPI app BEFORE decorators
 app = FastAPI()
+
+def _parse_allowed_origins() -> List[str]:
+        configured = os.getenv("CORS_ALLOWED_ORIGINS", "")
+        if configured.strip():
+                    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+        return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://seamstress-m6lai.ondigitalocean.app",
+    ]
 
 
 AFFIRMATIVE_RE = re.compile(
