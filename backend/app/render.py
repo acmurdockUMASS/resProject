@@ -118,12 +118,12 @@ def _render_education(resume: Resume) -> str:
 			lines.append(header + " \\")
 		if degree_bits:
 			lines.append(degree_bits + " \\")
-		if _gpa_should_show(edu.gpa):
-			lines.append(f"GPA: {_escape_latex(edu.gpa)} \\")
 		if edu.coursework:
 			coursework = ", ".join(_escape_latex(cw) for cw in edu.coursework if cw.strip())
 			if coursework:
 				lines.append(f"\\textbf{{Coursework:}} {coursework}")
+		if _gpa_should_show(edu.gpa):
+			lines.append(f"GPA: {_escape_latex(edu.gpa)}")
 		if lines:
 			entries.append("\n".join(lines))
 	return _section("Education", "\n\n".join(entries))
@@ -133,21 +133,25 @@ def _render_experience(resume: Resume) -> str:
 	entries = []
 	for role in resume.experience:
 		company = _escape_latex(role.company)
+		location = _escape_latex(role.location)
 		date_range = _join_non_empty([_escape_latex(role.start), _escape_latex(role.end)], sep=" -- ")
+		left_bits = []
+		if company:
+			left_bits.append(f"\\textbf{{{company}}}")
+		if location:
+			left_bits.append(f"\\textit{{{location}}}")
+		left_text = " ".join(left_bits)
 		header = _join_non_empty([
-			f"\\textbf{{{company}}}" if company else "",
+			left_text,
 			f"\\hfill {date_range}" if date_range else "",
 		], sep=" ")
-		title_line = _join_non_empty([
-			_escape_latex(role.role),
-			_escape_latex(role.location),
-		], sep=" \\hfill ")
+		role_line = _escape_latex(role.role)
 		bullets = _format_itemize(role.bullets)
 		parts = []
 		if header:
 			parts.append(header + " \\")
-		if title_line:
-			parts.append(title_line)
+		if role_line:
+			parts.append(role_line)
 		if bullets:
 			parts.append(bullets)
 		if parts:
