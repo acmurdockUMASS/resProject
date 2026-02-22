@@ -5,7 +5,6 @@ from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
 from fastapi import FastAPI, HTTPException, UploadFile
-from fastapi import FastAPI, HTTPException, UploadFile
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
 from .models import UploadResumeResponse, PresignedUrlResponse, JobSearchResponse, JobResult, JobSearchRequest
