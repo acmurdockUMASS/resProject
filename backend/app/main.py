@@ -1,33 +1,23 @@
+import json
 import os
 import uuid
-from fastapi import FastAPI, UploadFile
-from fastapi.responses import JSONResponse
-from .parse import extract_text
-from .storage import put_object, presigned_get_url
-from .models import UploadResumeResponse, PresignedUrlResponse
-from dotenv import load_dotenv
-from pydantic import BaseModel
-from .resume_schema import Resume
-from .llm import apply_chat_edits
-from .storage import get_object_bytes
-from .parser import parse_resume_text
-from .storage import get_object_bytes
-import json
-from typing import Dict, Any, List
-
-from fastapi import FastAPI, UploadFile, HTTPException, Query
-from pydantic import BaseModel
-from dotenv import load_dotenv
+from typing import Any, Dict, List
 from urllib.request import Request, urlopen
 
+from fastapi import FastAPI, HTTPException, Query, UploadFile
+from pydantic import BaseModel
+
+from .llm import apply_chat_edits, structure_resume, tailor_resume_for_job
+from .models import (
+    JobResult,
+    JobSearchResponse,
+    TailorResumeRequest,
+    UploadResumeResponse,
+)
 from .parse import extract_text
 from .parser import parse_resume_text
-from .storage import put_object, presigned_get_url, get_object_bytes
-from .models import UploadResumeResponse, PresignedUrlResponse, JobResult, JobSearchResponse
 from .resume_schema import Resume
-from .llm import structure_resume, apply_chat_edits
-
-load_dotenv()
+from .storage import get_object_bytes, put_object
 
 app = FastAPI()
 
@@ -35,17 +25,13 @@ THEIRSTACK_BASE = "https://api.theirstack.com/v1"
 THEIRSTACK_API_KEY = os.getenv("THEIRSTACK_API_KEY")
 
 
-# ------------------ HEALTH ------------------
-
 @app.get("/health")
-def health():
+def health() -> Dict[str, bool]:
     return {"ok": True}
 
 
-# ------------------ RESUME UPLOAD ------------------
-
 @app.post("/api/resume", response_model=UploadResumeResponse)
-async def upload_resume(file: UploadFile):
+async def upload_resume(file: UploadFile) -> UploadResumeResponse:
     raw_text, raw_bytes = await extract_text(file)
 
     doc_id = str(uuid.uuid4())
@@ -65,10 +51,8 @@ async def upload_resume(file: UploadFile):
     )
 
 
-# ------------------ PARSE ------------------
-
 @app.post("/api/resume/{doc_id}/parse")
-async def parse_resume(doc_id: str):
+async def parse_resume(doc_id: str) -> Dict[str, Any]:
     text_key = f"extracted/{doc_id}/resume.txt"
     raw_text = get_object_bytes(text_key).decode("utf-8")
 
@@ -80,14 +64,12 @@ async def parse_resume(doc_id: str):
     return {"doc_id": doc_id, "resume": resume.model_dump()}
 
 
-# ------------------ STRUCTURE ------------------
-
 class StructureRequest(BaseModel):
     extra_experience: str = ""
 
 
 @app.post("/api/resume/{doc_id}/structure")
-async def structure_resume_endpoint(doc_id: str, req: StructureRequest):
+async def structure_resume_endpoint(doc_id: str, req: StructureRequest) -> Dict[str, Any]:
     text_key = f"extracted/{doc_id}/resume.txt"
     raw_text = get_object_bytes(text_key).decode("utf-8")
 
@@ -97,37 +79,69 @@ async def structure_resume_endpoint(doc_id: str, req: StructureRequest):
     put_object(out_key, resume.model_dump_json(indent=2).encode(), "application/json")
 
     return resume.model_dump()
-    url = presigned_get_url(text_key, expires_seconds=3600)
-    return PresignedUrlResponse(doc_id=doc_id, upload_key=text_key, download_url=url)
 
-
-# ------------------ CHAT EDITS ------------------
 
 class ChatRequest(BaseModel):
     message: str
 
 
+def _load_latest_resume(doc_id: str) -> Resume:
+    candidate_keys = [
+        f"draft/{doc_id}/resume.json",
+        f"tailored/{doc_id}/resume.json",
+        f"structured/{doc_id}/resume.json",
+        f"parsed/{doc_id}/resume.json",
+    ]
+
+    for key in candidate_keys:
+        try:
+            raw = get_object_bytes(key)
+            return Resume.model_validate(json.loads(raw.decode()))
+        except Exception:
+            continue
+
+    raise HTTPException(
+        status_code=404,
+        detail="No resume draft found for this doc_id. Parse or structure resume first.",
+    )
+
+
 @app.post("/api/resume/{doc_id}/chat")
-async def chat_resume(doc_id: str, req: ChatRequest):
-
-    draft_key = f"draft/{doc_id}/resume.json"
-    parsed_key = f"parsed/{doc_id}/resume.json"
-
-    try:
-        raw = get_object_bytes(draft_key)
-    except Exception:
-        raw = get_object_bytes(parsed_key)
-
-    resume = Resume.model_validate(json.loads(raw.decode()))
-
+async def chat_resume(doc_id: str, req: ChatRequest) -> Dict[str, Any]:
+    resume = _load_latest_resume(doc_id)
     updated = apply_chat_edits(resume, req.message)
 
+    draft_key = f"draft/{doc_id}/resume.json"
     put_object(draft_key, updated.model_dump_json(indent=2).encode(), "application/json")
 
     return updated.model_dump()
 
 
-# ------------------ THEIRSTACK ------------------
+@app.post("/api/resume/{doc_id}/tailor")
+async def tailor_resume(doc_id: str, req: TailorResumeRequest) -> Dict[str, Any]:
+    resume = _load_latest_resume(doc_id)
+
+    job_description = req.job_description.strip() if req.job_description else ""
+    if not job_description:
+        raise HTTPException(status_code=400, detail="job_description is required")
+
+    tailored = tailor_resume_for_job(
+        resume=resume,
+        job_description=job_description,
+        job_title=req.job_title,
+        company=req.company,
+    )
+
+    tailored_key = f"tailored/{doc_id}/resume.json"
+    draft_key = f"draft/{doc_id}/resume.json"
+
+    payload = tailored.model_dump_json(indent=2).encode()
+    put_object(tailored_key, payload, "application/json")
+    put_object(draft_key, payload, "application/json")
+
+    return tailored.model_dump()
+
+
 
 def _theirstack_post(path: str, body: Dict[str, Any]) -> Dict[str, Any]:
     if not THEIRSTACK_API_KEY:
@@ -155,8 +169,7 @@ def search_jobs(
     max_age_days: int = Query(14),
     limit: int = Query(20),
     offset: int = Query(0),
-):
-
+) -> JobSearchResponse:
     body: Dict[str, Any] = {
         "offset": offset,
         "limit": limit,
@@ -184,6 +197,7 @@ def search_jobs(
                 salary=j.get("salary_string", "Not listed"),
                 job_id=int(j.get("id", -1)),
                 apply_url=j.get("url"),
+                description=(j.get("description") or j.get("job_description") or ""),
             )
         )
 
