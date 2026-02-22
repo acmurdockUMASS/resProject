@@ -368,7 +368,10 @@ async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
     }
 
 
-def _build_export_payload(doc_id: str):
+@app.post("/api/resume/{doc_id}/export")
+@app.post("/resume/{doc_id}/export")
+async def export_resume(doc_id: str):
+    # Load draft if it exists, else parsed
     draft_key = f"draft/{doc_id}/resume.json"
     parsed_key = f"parsed/{doc_id}/resume.json"
 
@@ -383,7 +386,7 @@ def _build_export_payload(doc_id: str):
 
     template_path = Path(__file__).parent / "latex" / "template.tex"
     if not template_path.exists():
-        return None, {
+        return {
             "error": "Missing template.tex",
             "expected_path": str(template_path),
             "used_resume_key": source_key,
@@ -391,39 +394,13 @@ def _build_export_payload(doc_id: str):
 
     template_tex = template_path.read_text(encoding="utf-8")
     rendered_tex = render_resume_to_latex(Resume.model_validate(resume_json), template_tex)
-    return {
-        "source_key": source_key,
-        "resume_json": resume_json,
-        "rendered_tex": rendered_tex,
-    }, None
-
-@app.post("/api/resume/{doc_id}/preview")
-@app.post("/resume/{doc_id}/preview")
-async def preview_resume(doc_id: str):
-    payload, error = _build_export_payload(doc_id)
-    if error:
-        return error
-
-    return {
-        "doc_id": doc_id,
-        "source_key": payload["source_key"],
-        "resume_json": payload["resume_json"],
-        "resume_tex": payload["rendered_tex"],
-    }
-
-
-@app.post("/api/resume/{doc_id}/export")
-@app.post("/resume/{doc_id}/export")
-async def export_resume(doc_id: str):
-    payload, error = _build_export_payload(doc_id)
-    if error:
-        return error
+    
 
     # Zip it in-memory
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", compression=zipfile.ZIP_DEFLATED) as z:
-        z.writestr("resume.json", json.dumps(payload["resume_json"], indent=2))
-        z.writestr("resume.tex", payload["rendered_tex"])
+         z.writestr("resume.json", json.dumps(resume_json, indent=2))
+         z.writestr("resume.tex", rendered_tex)
 
     buf.seek(0)
 
@@ -434,7 +411,7 @@ async def export_resume(doc_id: str):
 
     return {
         "doc_id": doc_id,
-        "source_key": payload["source_key"],
+        "source_key": source_key,
         "export_key": export_key,
         "download_url": url,
     }
