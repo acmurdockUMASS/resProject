@@ -26,9 +26,13 @@ app = FastAPI()
 
 
 AFFIRMATIVE_RE = re.compile(r"\b(yes|yep|yeah|yup|sure|ok|okay|please do|go ahead|sounds good|confirm)\b")
-NEGATIVE_RE = re.compile(r"\b(no|nope|nah|don't|do not|stop|cancel|never mind|nevermind)\b")
+NEGATIVE_RE = re.compile(r"\b(no+|nope|nah+h*|don't|do not|stop|cancel|never mind|nevermind)\b")
 NO_CHANGE_RE = re.compile(
     r"\b(nothing|no changes|looks good|looks fine|it's fine|its fine|leave it|as is|don't change|do not change|just export|all set)\b",
+    re.IGNORECASE,
+)
+THERAPY_RE = re.compile(
+    r"\b(therapy|therapist|counselor|counselling|counseling|depressed|depression|anxiety|panic|suicid|self-harm|self harm|trauma|ptsd|mental health|grief)\b",
     re.IGNORECASE,
 )
 def _is_no_change(message: str) -> bool:
@@ -55,6 +59,10 @@ def _is_affirmative(message: str) -> bool:
 
 def _is_negative(message: str) -> bool:
     return bool(NEGATIVE_RE.search(message.lower()))
+
+
+def _is_therapy_request(message: str) -> bool:
+    return bool(THERAPY_RE.search(message))
 
 
 
@@ -211,6 +219,29 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "status": "info",
         }
 
+    if _is_therapy_request(user_message):
+        assistant_message = (
+            "I’m here to help with resume edits and job prep, and I can’t do therapy. "
+            "If you’re going through a tough time, consider reaching out to a trusted person "
+            "or a professional. Want to keep working on your resume?"
+        )
+        history.extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_message},
+            ]
+        )
+        _save_json(history_key, history)
+        return {
+            "doc_id": doc_id,
+            "source_key": source_key,
+            "resume": resume.model_dump(),
+            "assistant_message": assistant_message,
+            "edits_summary": [],
+            "needs_confirmation": False,
+            "status": "info",
+        }
+
     try:
         proposal = propose_chat_edits(resume, user_message, history)
     except Exception as e:
@@ -240,6 +271,7 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "needs_confirmation": False,
             "status": "info",
         }
+    assistant_message = proposal.assistant_message
     history.extend(
         [
             {"role": "user", "content": user_message},
