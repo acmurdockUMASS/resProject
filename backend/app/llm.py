@@ -112,6 +112,10 @@ Return JSON with exactly these keys:
 If you need more info, ask a concise question in assistant_message, set needs_confirmation=false,
 and return proposed_resume equal to CURRENT_RESUME_JSON with edits_summary=[].
 
+If CURRENT_RESUME_JSON.header.linkedin and CURRENT_RESUME_JSON.header.portfolio are both empty
+AND CURRENT_RESUME_JSON.header.location is empty, ask for the user's city and state abbreviation
+(e.g., "Boston, MA") before proposing edits.
+
 If you are ready to propose edits, include edits_summary (3-7 bullets), set needs_confirmation=true,
 and in assistant_message say: "Here are the edits I can make:" then list the edits, and end with
 "Should I go ahead and make your new resume?".

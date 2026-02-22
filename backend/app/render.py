@@ -73,6 +73,7 @@ def _render_header(resume: Resume) -> str:
 	header = resume.header
 	name = _escape_latex(header.name) if header.name else ""
 	contact_parts: List[str] = []
+	link_parts: List[str] = []
 
 	if header.phone:
 		contact_parts.append(_escape_latex(header.phone))
@@ -81,14 +82,17 @@ def _render_header(resume: Resume) -> str:
 		contact_parts.append(f"\\href{{mailto:{header.email}}}{{{email}}}")
 	if header.linkedin:
 		link = _normalize_url(header.linkedin)
-		contact_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.linkedin)}}}")
+		link_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.linkedin)}}}")
 	if header.github:
 		link = _normalize_url(header.github)
-		contact_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.github)}}}")
+		link_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.github)}}}")
 	if header.portfolio:
 		link = _normalize_url(header.portfolio)
-		contact_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.portfolio)}}}")
-	if header.location:
+		link_parts.append(f"\\href{{{link}}}{{{_escape_latex(header.portfolio)}}}")
+
+	if link_parts:
+		contact_parts.extend(link_parts)
+	elif header.location:
 		contact_parts.append(_escape_latex(header.location))
 
 	contact_line = _join_non_empty(contact_parts)
