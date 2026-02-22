@@ -7,7 +7,6 @@ from urllib.request import Request, urlopen
 from fastapi import FastAPI, HTTPException, Query, UploadFile
 from pydantic import BaseModel
 
-from .llm import apply_chat_edits, structure_resume, tailor_resume_for_job
 from .models import (
     JobResult,
     JobSearchResponse,
@@ -23,6 +22,23 @@ app = FastAPI()
 
 THEIRSTACK_BASE = "https://api.theirstack.com/v1"
 THEIRSTACK_API_KEY = os.getenv("THEIRSTACK_API_KEY")
+
+
+def _get_llm_functions():
+    try:
+        from . import llm as llm_module
+    except Exception as exc:  # pragma: no cover - defensive startup/runtime guard
+        raise HTTPException(status_code=500, detail=f"LLM module unavailable: {exc}") from exc
+
+    required = ("apply_chat_edits", "structure_resume", "tailor_resume_for_job")
+    missing = [name for name in required if not hasattr(llm_module, name)]
+    if missing:
+        raise HTTPException(
+            status_code=500,
+            detail=f"LLM functions unavailable: {', '.join(missing)}",
+        )
+
+    return llm_module
 
 
 @app.get("/health")
@@ -73,7 +89,8 @@ async def structure_resume_endpoint(doc_id: str, req: StructureRequest) -> Dict[
     text_key = f"extracted/{doc_id}/resume.txt"
     raw_text = get_object_bytes(text_key).decode("utf-8")
 
-    resume = structure_resume(raw_text, req.extra_experience)
+    llm_module = _get_llm_functions()
+    resume = llm_module.structure_resume(raw_text, req.extra_experience)
 
     out_key = f"structured/{doc_id}/resume.json"
     put_object(out_key, resume.model_dump_json(indent=2).encode(), "application/json")
@@ -109,7 +126,8 @@ def _load_latest_resume(doc_id: str) -> Resume:
 @app.post("/api/resume/{doc_id}/chat")
 async def chat_resume(doc_id: str, req: ChatRequest) -> Dict[str, Any]:
     resume = _load_latest_resume(doc_id)
-    updated = apply_chat_edits(resume, req.message)
+    llm_module = _get_llm_functions()
+    updated = llm_module.apply_chat_edits(resume, req.message)
 
     draft_key = f"draft/{doc_id}/resume.json"
     put_object(draft_key, updated.model_dump_json(indent=2).encode(), "application/json")
@@ -125,7 +143,8 @@ async def tailor_resume(doc_id: str, req: TailorResumeRequest) -> Dict[str, Any]
     if not job_description:
         raise HTTPException(status_code=400, detail="job_description is required")
 
-    tailored = tailor_resume_for_job(
+    llm_module = _get_llm_functions()
+    tailored = llm_module.tailor_resume_for_job(
         resume=resume,
         job_description=job_description,
         job_title=req.job_title,
