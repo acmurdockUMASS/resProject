@@ -6,7 +6,9 @@ import {
   exportResume,
   searchJobs,
 } from "./api.js";
-
+<div className="bg-red-500 text-white p-10">
+  TEST
+</div>
 function cx(...parts) {
   return parts.filter(Boolean).join(" ");
 }
