@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List
+from typing import List,Dict
 
 class Header(BaseModel):
     name: str = ""
@@ -17,6 +17,14 @@ class EducationEntry(BaseModel):
     grad: str = ""
     gpa: str = ""
     coursework: List[str] = Field(default_factory=list)
+
+class ExtracurricularEntry(BaseModel):
+    org: str = ""
+    location: str = ""
+    title: str = ""
+    start: str = ""
+    end: str = ""
+    bullets: List[str] = Field(default_factory=list)
 
 class RoleEntry(BaseModel):
     company: str = ""
@@ -46,7 +54,7 @@ class Skills(BaseModel):
     frameworks: List[str] = Field(default_factory=list)
     tools: List[str] = Field(default_factory=list)
     concepts: List[str] = Field(default_factory=list)
-
+    categories: Dict[str, List[str]] = Field(default_factory=dict)
 class Resume(BaseModel):
     header: Header = Field(default_factory=Header)
     education: List[EducationEntry] = Field(default_factory=list)
@@ -55,3 +63,4 @@ class Resume(BaseModel):
     projects: List[ProjectEntry] = Field(default_factory=list)
     leadership: List[LeadershipEntry] = Field(default_factory=list)
     awards: List[str] = Field(default_factory=list)
+    extracurriculars: List[ExtracurricularEntry] = Field(default_factory=list)

@@ -122,7 +122,7 @@ def _render_education(resume: Resume) -> str:
 				"\\end{tabular*}"
 			)
 		if degree_bits:
-			lines.append(degree_bits + " \\")
+			lines.append(degree_bits + " \\\\")
 		if edu.coursework:
 			coursework = ", ".join(_escape_latex(cw) for cw in edu.coursework if cw.strip())
 			if coursework:
@@ -135,37 +135,43 @@ def _render_education(resume: Resume) -> str:
 
 
 def _render_experience(resume: Resume) -> str:
-	entries = []
-	for role in resume.experience:
-		company = _escape_latex(role.company)
-		location = _escape_latex(role.location)
-		date_range = _join_non_empty([_escape_latex(role.start), _escape_latex(role.end)], sep=" -- ")
-		left_bits = []
-		if company:
-			left_bits.append(f"\\textbf{{{company}}}")
-		if location:
-			left_bits.append(f"\\textit{{{location}}}")
-		left_text = " ".join(left_bits)
-		header = ""
-		if left_text or date_range:
-			header = (
-				"\\begin{tabular*}{\\textwidth}{@{\\extracolsep{\\fill}} l r}"
-				f"{left_text} & {date_range} \\\\"
-				"\\end{tabular*}"
-			)
-		role_line = _escape_latex(role.role)
-		bullets = _format_itemize(role.bullets)
-		parts = []
-		if header:
-			parts.append(header + " \\")
-		if role_line:
-			parts.append(role_line)
-		if bullets:
-			parts.append(bullets)
-		if parts:
-			entries.append("\n".join(parts))
-	return _section("Work Experience", "\n\n".join(entries))
+    entries = []
+    for role in resume.experience:
+        company = _escape_latex(role.company)
+        location = _escape_latex(role.location)
 
+        date_range = _join_non_empty(
+            [_escape_latex(role.start), _escape_latex(role.end)],
+            sep=" -- "
+        )
+
+        role_title = _escape_latex(role.role)
+
+        header = ""
+        if company or date_range or location or role_title:
+            # Company (L) | Dates (R)
+            # Location (L) | Role (R)
+            header = (
+                f"\\EntryHeadingTwo"
+                f"{{{company}}}{{{date_range}}}"
+                f"{{{location}}}{{{role_title}}}"
+            )
+
+        bullets = _format_itemize(role.bullets)
+
+        parts = []
+        if header:
+            parts.append(header)
+        if bullets:
+            # wrap the bullets in the environment used by the template
+            bullets = bullets.replace("\\begin{itemize}", "\\begin{EntryBullets}") \
+                             .replace("\\end{itemize}", "\\end{EntryBullets}")
+            parts.append(bullets)
+
+        if parts:
+            entries.append("\n".join(parts))
+
+    return _section("Work Experience", "\n\n".join(entries))
 
 def _render_projects(resume: Resume) -> str:
 	entries = []
@@ -182,7 +188,7 @@ def _render_projects(resume: Resume) -> str:
 		bullets = _format_itemize(project.bullets)
 		parts = []
 		if header:
-			parts.append(header + " \\")
+			parts.append(header + " \\\\")
 		if stack:
 			parts.append(f"\\textit{{Stack:}} {stack}")
 		if bullets:
@@ -193,19 +199,24 @@ def _render_projects(resume: Resume) -> str:
 
 
 def _render_skills(resume: Resume) -> str:
-	skills = resume.skills
-	lines = []
-	if skills.languages:
-		lines.append(f"\\textbf{{Programming Languages:}} {', '.join(_escape_latex(s) for s in skills.languages)}")
-	if skills.frameworks:
-		lines.append(f"\\textbf{{Frameworks:}} {', '.join(_escape_latex(s) for s in skills.frameworks)}")
-	if skills.tools:
-		lines.append(f"\\textbf{{Tools:}} {', '.join(_escape_latex(s) for s in skills.tools)}")
-	if skills.concepts:
-		lines.append(f"\\textbf{{Concepts:}} {', '.join(_escape_latex(s) for s in skills.concepts)}")
-	return _section("Skills", "\\\\\n".join(lines))
+    skills = resume.skills
+    lines = []
 
+    if skills.languages:
+        lines.append(f"\\textbf{{Programming Languages:}} {', '.join(_escape_latex(s) for s in skills.languages)}")
+    if skills.frameworks:
+        lines.append(f"\\textbf{{Frameworks:}} {', '.join(_escape_latex(s) for s in skills.frameworks)}")
+    if skills.tools:
+        lines.append(f"\\textbf{{Tools:}} {', '.join(_escape_latex(s) for s in skills.tools)}")
+    if skills.concepts:
+        lines.append(f"\\textbf{{Concepts:}} {', '.join(_escape_latex(s) for s in skills.concepts)}")
 
+    for label, items in (skills.categories or {}).items():
+        cleaned = [_escape_latex(x) for x in items if x.strip()]
+        if cleaned:
+            lines.append(f"\\textbf{{{_escape_latex(label)}:}} {', '.join(cleaned)}")
+
+    return _section("Technical Skills", "\\\\\n".join(lines))
 def _render_leadership(resume: Resume) -> str:
 	entries = []
 	for leader in resume.leadership:
@@ -219,7 +230,7 @@ def _render_leadership(resume: Resume) -> str:
 		bullets = _format_itemize(leader.bullets)
 		parts = []
 		if header:
-			parts.append(header + " \\")
+			parts.append(header + " \\\\")
 		if title:
 			parts.append(title)
 		if bullets:
@@ -227,6 +238,39 @@ def _render_leadership(resume: Resume) -> str:
 		if parts:
 			entries.append("\n".join(parts))
 	return _section("Leadership Experience", "\n\n".join(entries))
+
+def _render_extracurriculars(resume: Resume) -> str:
+    # If your Resume schema doesn't have extracurriculars yet, this will safely render nothing.
+    extracurriculars = getattr(resume, "extracurriculars", [])
+    entries = []
+
+    for act in extracurriculars:
+        org = _escape_latex(getattr(act, "org", ""))
+        location = _escape_latex(getattr(act, "location", ""))
+        title = _escape_latex(getattr(act, "title", ""))
+        date_range = _join_non_empty(
+            [_escape_latex(getattr(act, "start", "")), _escape_latex(getattr(act, "end", ""))],
+            sep=" -- "
+        )
+
+        header = (
+            f"\\EntryHeadingTwo"
+            f"{{{org or '~'}}}{{{date_range or '~'}}}"
+            f"{{{location or '~'}}}{{{title or '~'}}}"
+        )
+
+        bullets = _format_itemize(getattr(act, "bullets", []))
+        if bullets:
+            bullets = bullets.replace("\\begin{itemize}", "\\begin{EntryBullets}") \
+                             .replace("\\end{itemize}", "\\end{EntryBullets}")
+
+        parts = [header]
+        if bullets:
+            parts.append(bullets)
+
+        entries.append("\n".join(parts))
+
+    return _section("Extracurriculars", "\n\n".join(entries))
 
 
 def _render_awards(resume: Resume) -> str:
@@ -243,6 +287,7 @@ def render_resume_to_latex(resume: Resume, template_tex: str) -> str:
 		"SKILLS_BLOCK": _render_skills(resume),
 		"LEADERSHIP_BLOCK": _render_leadership(resume),
 		"AWARDS_BLOCK": _render_awards(resume),
+		"EXTRACURRICULARS_BLOCK": _render_extracurriculars(resume),
 	}
 
 	rendered = template_tex

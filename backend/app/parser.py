@@ -25,7 +25,7 @@ def parse_resume_text(raw: str) -> Resume:
             "location": ""
         },
         "education": [],
-        "skills": {"languages": [], "frameworks": [], "tools": [], "concepts": []},
+        "skills": {"languages": [], "frameworks": [], "tools": [], "concepts": [], "categories": {}},
         "experience": [],
         "projects": [],
         "leadership": [],

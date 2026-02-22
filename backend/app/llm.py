@@ -46,7 +46,7 @@ matches this JSON schema:
     "education": [
         {{"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}}
     ],
-    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": []}},
+    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": [], "categories":[]}}],
     "experience": [
         {{"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}}
     ],
@@ -65,6 +65,9 @@ Rules:
 - Split bullets into concise action-oriented statements.
 - Preserve original meaning; paraphrase only if necessary for clarity.
 - If you are unsure, leave the field empty.
+-- Skills parsing rule:
+  If skills are grouped under custom headings (e.g., "Laboratory:", "Software and Analytical:", "Professional:"),
+  put them in skills.categories with the heading as the key and an array of the listed items as the value.
 - If a resume section does not match the schema exactly, map it to the closest section.
     For example: certifications -> awards, activities -> leadership, relevant coursework -> education.coursework.
 
