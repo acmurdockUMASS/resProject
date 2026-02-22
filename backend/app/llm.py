@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-
+from pydantic import ValidationError
 from google import genai
 from google.genai import types
 
@@ -18,58 +18,145 @@ class LLMEditProposal(BaseModel):
     needs_confirmation: bool = True
 
 
+def _strip_fences(text: str) -> str:
+    value = (text or "").strip()
+    if value.startswith("```"):
+        parts = value.split("```")
+        value = parts[1].strip() if len(parts) > 1 else value
+        if value.lower().startswith("json"):
+            value = value[4:].strip()
+    return value
+
+
+def _extract_json_object(text: str) -> str:
+    """
+    Pull the outermost JSON object from noisy model output.
+    Keeps strict schema validation later via Pydantic.
+    """
+    s = _strip_fences(text)
+    if not s:
+        raise ValueError("empty response")
+    if s.startswith("{") and s.endswith("}"):
+        return s
+
+    start = s.find("{")
+    if start < 0:
+        raise ValueError("no json object in response")
+
+    depth = 0
+    in_string = False
+    escaped = False
+    end = -1
+    for i, ch in enumerate(s[start:], start=start):
+        if escaped:
+            escaped = False
+            continue
+        if ch == "\\":
+            escaped = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                end = i
+                break
+
+    if end < 0:
+        raise ValueError("unterminated json object in response")
+    return s[start : end + 1]
+
+
+def _parse_proposal_response(raw_text: str) -> LLMEditProposal:
+    payload = _extract_json_object(raw_text)
+    proposal = LLMEditProposal.model_validate_json(payload)
+    Resume.model_validate(proposal.proposed_resume)
+    return proposal
+
+
 def _build_parse_prompt(raw_text: str, seed_resume: Dict[str, Any]) -> str:
-        """
-        Gemini should extract resume content into the Resume JSON schema.
-        It must return ONLY JSON matching the Resume schema below.
-        """
-        return f"""
+    """
+    Gemini should extract resume content into the Resume JSON schema.
+    It must return ONLY JSON matching the Resume schema below.
+    """
+    schema = {
+        "header": {
+            "name": "",
+            "email": "",
+            "phone": "",
+            "linkedin": "",
+            "github": "",
+            "portfolio": "",
+            "location": ""
+        },
+        "education": [
+            {"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}
+        ],
+        "skills": {
+            "languages": [],
+            "frameworks": [],
+            "tools": [],
+            "concepts": [],
+            # IMPORTANT: make this a dict to match your “heading as key” rule
+            "categories": {}
+        },
+        "experience": [
+            {"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}
+        ],
+        "projects": [
+            {"name": "", "link": "", "stack": [], "start": "", "end": "", "bullets": []}
+        ],
+        "leadership": [
+            {"org": "", "title": "", "start": "", "end": "", "bullets": []}
+        ],
+        "awards": []
+    }
+
+    return f"""
 Return ONLY valid JSON. No markdown. No commentary.
 
-You will be given a SEED_RESUME_JSON already extracted from the resume.
-Your job is to PRESERVE all existing data in SEED_RESUME_JSON and fill missing fields
-by extracting from RAW_RESUME_TEXT. Do NOT remove or overwrite existing non-empty values
-unless the raw text explicitly corrects them.
+You will be given:
+1) SEED_RESUME_JSON already extracted from the resume.
+2) RAW_RESUME_TEXT (raw text from the resume).
 
-Map any extra resume information into the closest matching field so the final output
-matches this JSON schema:
-{{
-    "header": {{
-        "name": "",
-        "email": "",
-        "phone": "",
-        "linkedin": "",
-        "github": "",
-        "portfolio": "",
-        "location": ""
-    }},
-    "education": [
-        {{"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}}
-    ],
-    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": [], "categories":[]}}],
-    "experience": [
-        {{"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}}
-    ],
-    "projects": [
-        {{"name": "", "link": "", "stack": [], "start": "", "end": "", "bullets": []}}
-    ],
-    "leadership": [
-        {{"org": "", "title": "", "start": "", "end": "", "bullets": []}}
-    ],
-    "awards": []
-}}
+Your job:
+- PRESERVE all existing data in SEED_RESUME_JSON.
+- Fill missing/empty fields by extracting from RAW_RESUME_TEXT.
+- Do NOT remove or overwrite existing non-empty values
+  unless RAW_RESUME_TEXT explicitly corrects them.
+
+If the user asks for a broad improvement like "make it professional", "polish it", "improve it":
+- Propose rewrites across ALL experience + project bullets (rewrite wording only, no new facts).
+- Set needs_confirmation=true
+- Provide edits_summary (strings describing what you changed)
+
+Output must EXACTLY match this JSON schema (same keys, correct types):
+{json.dumps(schema, indent=2)}
 
 Rules:
 - Do NOT invent employers, schools, titles, dates, locations, metrics, links, or awards.
-- If a field is missing in the resume, use "" or [] as appropriate.
+- If a field is missing, use "" or [] or {{}} as appropriate.
 - Split bullets into concise action-oriented statements.
-- Preserve original meaning; paraphrase only if necessary for clarity.
-- If you are unsure, leave the field empty.
--- Skills parsing rule:
-  If skills are grouped under custom headings (e.g., "Laboratory:", "Software and Analytical:", "Professional:"),
-  put them in skills.categories with the heading as the key and an array of the listed items as the value.
-- If a resume section does not match the schema exactly, map it to the closest section.
-    For example: certifications -> awards, activities -> leadership, relevant coursework -> education.coursework.
+- Preserve original meaning; paraphrase only for clarity.
+- If unsure, leave empty.
+
+Skills parsing rule:
+- If skills are grouped under custom headings (e.g., "Laboratory:", "Software and Analytical:", "Professional:"),
+  store them in skills.categories as a JSON object:
+  {{
+    "Laboratory": ["Skill1", "Skill2"],
+    "Software and Analytical": ["SkillA"]
+  }}
+
+If a resume section does not match the schema exactly, map it to the closest section:
+- certifications -> awards
+- activities -> leadership
+- relevant coursework -> education.coursework
 
 SEED_RESUME_JSON:
 {json.dumps(seed_resume, indent=2)}
@@ -85,52 +172,60 @@ def _build_chat_prompt(
     history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """
-    Gemini should propose resume edits based on the user's message.
-    It must return ONLY JSON matching the response schema below.
+    Gemini should propose edits to an existing Resume JSON.
+    Must return ONLY JSON matching LLMEditProposal shape:
+    {
+      "assistant_message": "...",
+      "edits_summary": ["..."],
+      "proposed_resume": { ... Resume JSON ... },
+      "needs_confirmation": true/false
+    }
     """
-    history_block = ""
-    if history:
-        # Keep last few turns to avoid huge prompts
-        turns = history[-8:]
-        history_block = "\n\nCHAT_HISTORY:\n" + "\n".join(
-            f'{t["role"].upper()}: {t["content"]}' for t in turns
-        )
+    history = history or []
+
+    # Make history deterministic + safe
+    history_lines: List[str] = []
+    for turn in history[-12:]:  # keep it short
+        role = (turn.get("role") or "").strip().lower()
+        content = (turn.get("content") or "").strip()
+        if not content:
+            continue
+        if role not in ("user", "assistant"):
+            role = "user"
+        history_lines.append(f"{role.upper()}: {content}")
+
+    history_block = "\n".join(history_lines) if history_lines else "NONE"
 
     return f"""
 Return ONLY valid JSON. No markdown. No commentary.
 
-You are helping edit an existing resume JSON object. The resume JSON schema MUST remain identical.
-Do NOT invent employers, schools, titles, dates, locations, metrics, or links.
-You MAY rewrite bullet wording to be more professional/technical while preserving meaning.
-You MAY add new bullets ONLY if the user explicitly provides the underlying facts.
-If the user says "remove", remove it. If the user says "keep", preserve it.
-If unknown, use "" or [].
+You are editing an existing resume represented as JSON (RESUME_JSON).
+You must produce an edit proposal in this exact shape:
 
-Return JSON with exactly these keys:
-- assistant_message: string to show the user
-- edits_summary: array of short bullet strings describing the changes
-- proposed_resume: full resume JSON object (same schema as CURRENT_RESUME_JSON)
-- needs_confirmation: boolean
+{{
+  "assistant_message": "brief explanation of what you changed and why",
+  "edits_summary": ["short bullet-like strings describing changes"],
+  "proposed_resume": <RESUME_JSON with edits applied>,
+  "needs_confirmation": true
+}}
 
-If you need more info, ask a concise question in assistant_message, set needs_confirmation=false,
-and return proposed_resume equal to CURRENT_RESUME_JSON with edits_summary=[].
+Rules:
+- Do NOT invent facts (companies, titles, dates, metrics, links).
+- You MAY rewrite bullets for clarity, impact, concision, and professionalism WITHOUT adding new facts.
+- Preserve structure and keys.
+- Only change fields relevant to the user's request.
+- If the request is broad ("polish", "make professional", "improve"), rewrite ALL experience + project bullets.
+- Default needs_confirmation=true unless user explicitly asked for an automatic rewrite and no factual risk exists.
 
-If CURRENT_RESUME_JSON.header.linkedin and CURRENT_RESUME_JSON.header.portfolio are both empty
-AND CURRENT_RESUME_JSON.header.location is empty, ask for the user's city and state abbreviation
-(e.g., "Boston, MA") before proposing edits.
+Conversation history:
+{history_block}
 
-If you are ready to propose edits, include edits_summary (3-7 bullets), set needs_confirmation=true,
-and in assistant_message say: "Here are the edits I can make:" then list the edits, and end with
-"Should I go ahead and make your new resume?".
-
-CURRENT_RESUME_JSON:
+Current RESUME_JSON:
 {json.dumps(resume_json, indent=2)}
 
-USER_MESSAGE:
+User request:
 {user_message}
-{history_block}
 """.strip()
-
 
 def _build_job_tailor_prompt(
     resume_json: Dict[str, Any],
@@ -145,6 +240,8 @@ Return ONLY valid JSON. No markdown. No commentary.
 
 You are tailoring an existing resume JSON object to align with a job posting.
 The resume JSON schema MUST remain identical.
+
+If the user says “make it professional / polish / improve”, you MUST propose edits across all experience + project bullets. Do NOT ask what to improve.
 
 Hard integrity rules:
 - Do NOT invent employers, schools, titles, dates, locations, links, awards, projects, or metrics.
@@ -185,7 +282,7 @@ def parse_resume_with_llm(raw_text: str, seed_resume: Dict[str, Any]) -> Resume:
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     client = genai.Client(api_key=api_key)
     prompt = _build_parse_prompt(raw_text, seed_resume)
@@ -199,15 +296,8 @@ def parse_resume_with_llm(raw_text: str, seed_resume: Dict[str, Any]) -> Resume:
         ),
     )
 
-    text = (resp.text or "").strip()
-
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1].strip() if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
-
-    data: Any = json.loads(text)
+    payload = _extract_json_object(resp.text or "")
+    data: Any = json.loads(payload)
     return Resume.model_validate(data)
 
 
@@ -219,20 +309,39 @@ def propose_chat_edits(
     """
     Input: Resume Pydantic model (already parsed WITHOUT AI)
     Output: LLM edit proposal and message for the user
+
+    Robustness:
+    - Calls Gemini once with the normal prompt
+    - If output fails JSON/schema validation, retries once with a strict "fix your JSON" prompt
+    - If still failing, returns a safe, non-crashing response
     """
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
-
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
     client = genai.Client(api_key=api_key)
 
-    prompt = _build_chat_prompt(resume.model_dump(), user_message, history)
+    def _retry_prompt(previous_output: str, base_prompt: str) -> str:
+        return f"""
+You returned invalid JSON.
 
-    resp = client.models.generate_content(
+Return ONLY valid JSON that matches the required response schema EXACTLY.
+No markdown. No commentary. No extra keys.
+
+Fix your previous output into valid JSON:
+{previous_output}
+
+Original instructions:
+{base_prompt}
+""".strip()
+
+    base_prompt = _build_chat_prompt(resume.model_dump(), user_message, history)
+
+    # --- Attempt 1 ---
+    resp1 = client.models.generate_content(
         model=model,
-        contents=prompt,
+        contents=base_prompt,
         config=types.GenerateContentConfig(
             temperature=0.2,
             max_output_tokens=4096,
@@ -240,23 +349,46 @@ def propose_chat_edits(
         ),
     )
 
-    text = (resp.text or "").strip()
+    text1 = resp1.text or ""
 
-    text = (resp.text or "").strip()
+    try:
+        return _parse_proposal_response(text1)
+    except ValidationError:
+        # fall through to retry
+        pass
+    except Exception:
+        # any other parsing error -> retry once
+        pass
 
-    # still strip fences just in case (usually unnecessary once schema enforced)
-    if text.startswith("```"):
-        parts = text.split("```")
-        text = parts[1].strip() if len(parts) > 1 else text
-        if text.lower().startswith("json"):
-            text = text[4:].strip()
+    # --- Attempt 2 (strict repair) ---
+    rp = _retry_prompt(text1, base_prompt)
+    resp2 = client.models.generate_content(
+        model=model,
+        contents=rp,
+        config=types.GenerateContentConfig(
+            temperature=0.0,
+            max_output_tokens=4096,
+            response_mime_type="application/json",
+        ),
+    )
 
-    # Validate directly
-    proposal = LLMEditProposal.model_validate_json(text)
-    # Ensure proposed resume still validates against the schema
-    Resume.model_validate(proposal.proposed_resume)
-    return proposal
+    text2 = resp2.text or ""
 
+    try:
+        return _parse_proposal_response(text2)
+    except Exception:
+        # --- Final safe fallback (no crash, no loop) ---
+        return LLMEditProposal(
+            assistant_message=(
+                "I ran into a formatting issue generating the edit plan. "
+                "Try again with a broad command like:\n"
+                "- “Rewrite all my experience and project bullets to be more professional.”\n"
+                "- “Tighten my bullets to one line each, keeping the meaning the same.”"
+            ),
+            edits_summary=[],
+            proposed_resume=resume.model_dump(),
+            needs_confirmation=False,
+        )
 
 def propose_job_tailored_edits(
     resume: Resume,
@@ -270,36 +402,43 @@ def propose_job_tailored_edits(
     if not api_key:
         raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
 
-    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash")
 
     client = genai.Client(api_key=api_key)
     prompt = _build_job_tailor_prompt(resume.model_dump(), job_description)
 
-    last_error: Optional[Exception] = None
-    for token_budget in (8192, 12288):
-        resp = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                temperature=0.2,
-                max_output_tokens=token_budget,
-                response_mime_type="application/json",
-            ),
-        )
+    def _retry_prompt(previous_output: str, base_prompt: str) -> str:
+        return f"""
+You returned invalid JSON.
 
-        text = (resp.text or "").strip()
+Return ONLY valid JSON that matches the required response schema EXACTLY.
+No markdown. No commentary. No extra keys.
 
-        if text.startswith("```"):
-            parts = text.split("```")
-            text = parts[1].strip() if len(parts) > 1 else text
-            if text.lower().startswith("json"):
-                text = text[4:].strip()
+Fix your previous output into valid JSON:
+{previous_output}
 
-        try:
-            proposal = LLMEditProposal.model_validate_json(text)
-            Resume.model_validate(proposal.proposed_resume)
-            return proposal
-        except Exception as exc:
-            last_error = exc
+Original instructions:
+{base_prompt}
+""".strip()
 
-    raise RuntimeError("Gemini returned an invalid or truncated tailoring response.") from last_error
+    resp1 = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.2,
+            max_output_tokens=4096,
+            response_mime_type="application/json",
+        ),
+    )
+
+    text = (resp.text or "").strip()
+
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1].strip() if len(parts) > 1 else text
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    proposal = LLMEditProposal.model_validate_json(text)
+    Resume.model_validate(proposal.proposed_resume)
+    return proposal

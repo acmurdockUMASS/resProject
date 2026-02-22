@@ -68,6 +68,11 @@ pip install --upgrade pip
 ## 4. Set required environment variables
 
 These are required for DigitalOcean Spaces file storage.
+For Gemini + cross-origin frontend requests, also set:
+
+* `GEMINI_API_KEY=<your key>`
+* `GEMINI_MODEL=gemini-2.5-flash` (optional)
+* `CORS_ALLOWED_ORIGINS=http://localhost:5173,http://127.0.0.1:5173,https://seamstress-m6lai.ondigitalocean.app`
 
 
 

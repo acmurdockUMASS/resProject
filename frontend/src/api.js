@@ -1,4 +1,4 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL;
+const API_BASE = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
 async function safeJson(resp) {
   const text = await resp.text();
@@ -64,4 +64,14 @@ export async function searchJobs({ role, min_salary_usd, limit }) {
   const data = await safeJson(resp);
   if (!resp.ok) throw new Error(data?.detail || data?.raw || "Job search failed");
   return data; // JobSearchResponse: { role, results: [...] }
+}
+
+export async function tailorResume(docId, jobDescription) {
+  const resp = await fetch(`${API_BASE}/api/resume/${docId}/tailor`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ job_description: jobDescription }),
+  });
+  if (!resp.ok) throw new Error((await resp.text()) || "Tailor failed");
+  return resp.json();
 }

@@ -1,6 +1,9 @@
+import os
 import uuid
 import json
 import re
+import logging
+import os
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
@@ -16,17 +19,41 @@ from .theirstack import search_jobs, map_job, search_companies_technographics
 import io
 import zipfile
 from pathlib import Path
-import re
+
 # Load environment variables FIRST
 load_dotenv()
 
 # Create FastAPI app BEFORE decorators
 app = FastAPI()
+logger = logging.getLogger(__name__)
+
+def _parse_allowed_origins() -> List[str]:
+        configured = os.getenv("CORS_ALLOWED_ORIGINS", "")
+        if configured.strip():
+                    return [origin.strip() for origin in configured.split(",") if origin.strip()]
+
+        return [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "https://seamstress-m6lai.ondigitalocean.app",
+    ]
 
 
-AFFIRMATIVE_RE = re.compile(r"\b(yes|yep|yeah|yup|sure|ok|okay|please do|go ahead|sounds good|confirm)\b")
-NEGATIVE_RE = re.compile(r"\b(no|nope|nah|don't|do not|stop|cancel|never mind|nevermind)\b")
+AFFIRMATIVE_RE = re.compile(
+    r"\b(yes|yep|yeah|yup|sure|ok|okay|please do|go ahead|sounds good|confirm|apply it|do it|looks great)\b",
+    re.IGNORECASE,
+)
 
+NEGATIVE_RE = re.compile(
+    r"\b(no|nope|nah|don't|do not|stop|cancel|never mind|nevermind|not now)\b",
+    re.IGNORECASE,
+)
+NO_CHANGE_RE = re.compile(
+    r"\b(nothing|no changes?|looks good|looks fine|it'?s fine|leave it|leave as is|as is|we'?re good|all set|just export|ready to export|good as is)\b",
+    re.IGNORECASE,
+)
+def _is_no_change(message: str) -> bool:
+    return bool(NO_CHANGE_RE.search(message.lower()))
 
 def _load_optional_json(key: str) -> Optional[Union[Dict[str, Any], List[Any]]]:
     try:
@@ -51,6 +78,33 @@ def _is_negative(message: str) -> bool:
     return bool(NEGATIVE_RE.search(message.lower()))
 
 
+def _normalize_chat_request(user_message: str) -> str:
+    msg = user_message.strip()
+    if not msg:
+        return msg
+
+    lowered = msg.lower()
+    tokens = re.findall(r"[a-zA-Z']+", lowered)
+    short = len(tokens) <= 3
+
+    if short and any(k in lowered for k in ("bullet", "bullets")):
+        return (
+            "Rewrite all experience and project bullets to be concise, professional, "
+            "and ATS-friendly while preserving facts."
+        )
+    if short and any(k in lowered for k in ("professional", "polish", "improve", "better")):
+        return (
+            "Polish my resume wording across all experience and project bullets without "
+            "adding new facts."
+        )
+    if short and any(k in lowered for k in ("skills", "tech stack", "stack")):
+        return (
+            "Improve my resume skills section wording and organization while keeping all "
+            "existing facts."
+        )
+    return msg
+
+
 
 @app.get("/health")
 def health():
@@ -58,6 +112,7 @@ def health():
 
 
 @app.post("/api/resume", response_model=UploadResumeResponse)
+@app.post("/resume", response_model=UploadResumeResponse)
 async def upload_resume(file: UploadFile):
     raw_text, raw_bytes = await extract_text(file)
 
@@ -79,12 +134,14 @@ async def upload_resume(file: UploadFile):
 
 
 @app.get("/api/resume/{doc_id}/text", response_model=PresignedUrlResponse)
+@app.get("/resume/{doc_id}/text", response_model=PresignedUrlResponse)
 async def get_extracted_text(doc_id: str):
     text_key = f"extracted/{doc_id}/resume.txt"
     url = presigned_get_url(text_key, expires_seconds=3600)
     return PresignedUrlResponse(doc_id=doc_id, upload_key=text_key, download_url=url)
 
 @app.post("/api/resume/{doc_id}/parse")
+@app.post("/resume/{doc_id}/parse")
 async def parse_resume(doc_id: str):
     text_key = f"extracted/{doc_id}/resume.txt"
     raw_text = get_object_bytes(text_key).decode("utf-8", errors="replace")
@@ -114,6 +171,7 @@ class TailorResumeRequest(BaseModel):
 
 
 @app.post("/api/resume/{doc_id}/chat")
+@app.post("/resume/{doc_id}/chat")
 async def chat_resume(doc_id: str, req: ChatRequest):
     draft_key = f"draft/{doc_id}/resume.json"
     parsed_key = f"parsed/{doc_id}/resume.json"
@@ -121,6 +179,7 @@ async def chat_resume(doc_id: str, req: ChatRequest):
     pending_key = f"draft/{doc_id}/pending.json"
 
     user_message = req.message.strip()
+    normalized_user_message = _normalize_chat_request(user_message)
     history: List[Dict[str, str]] = _load_optional_json(history_key) or []
     pending = _load_optional_json(pending_key)
     pending_is_active = bool(pending and pending.get("status") == "pending")
@@ -181,8 +240,60 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "needs_confirmation": False,
             "status": "rejected",
         }
+    # If user explicitly says no changes needed
+    if _is_no_change(user_message) and not pending_is_active:
+        assistant_message = (
+            "Got it — no changes needed. Want to export it now?"
+        )
 
-    proposal = propose_chat_edits(resume, user_message, history)
+        history.extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_message},
+            ]
+        )
+        _save_json(history_key, history)
+
+        return {
+            "doc_id": doc_id,
+            "source_key": source_key,
+            "resume": resume.model_dump(),
+            "assistant_message": assistant_message,
+            "edits_summary": [],
+            "needs_confirmation": False,
+            "status": "info",
+        }
+    try:
+        proposal = propose_chat_edits(resume, normalized_user_message, history)
+    except Exception:
+        logger.exception("chat proposal failed for doc_id=%s", doc_id)
+        # Never crash on user input; return a safe message
+        assistant_message = (
+            "I hit a temporary formatting issue while generating your edits. Try again with:\n"
+            "- “Rewrite all my experience and project bullets to be more professional.”\n"
+            "- “Shorten my bullets to one line each.”\n"
+            "- “What should I edit?”"
+        )
+
+        history.extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_message},
+            ]
+        )
+        _save_json(history_key, history)
+
+        return {
+            "doc_id": doc_id,
+            "source_key": source_key,
+            "assistant_message": assistant_message,
+            "edits_summary": [],
+            "proposed_resume": resume.model_dump(),
+            "needs_confirmation": False,
+            "status": "info",
+        }
+
+    # ✅ SUCCESS PATH: set assistant_message from the proposal
     assistant_message = proposal.assistant_message
 
     history.extend(
@@ -215,6 +326,7 @@ async def chat_resume(doc_id: str, req: ChatRequest):
 
 
 @app.post("/api/resume/{doc_id}/tailor")
+@app.post("/resume/{doc_id}/tailor")
 async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
     draft_key = f"draft/{doc_id}/resume.json"
     parsed_key = f"parsed/{doc_id}/resume.json"
@@ -269,6 +381,7 @@ async def tailor_resume_for_job(doc_id: str, req: TailorResumeRequest):
 
 
 @app.post("/api/resume/{doc_id}/export")
+@app.post("/resume/{doc_id}/export")
 async def export_resume(doc_id: str):
     # Load draft if it exists, else parsed
     draft_key = f"draft/{doc_id}/resume.json"
@@ -316,6 +429,7 @@ async def export_resume(doc_id: str):
     }
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
+@app.post("/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchRequest):
     # TheirStack currently only supports filtering by role/title + salary (+ other internal fields),
     # and will reject unknown fields like `location`. So we:
@@ -356,98 +470,25 @@ async def jobs_search(req: JobSearchRequest):
     return JobSearchResponse(role=req.role, results=results)
 
 
-@app.post("/api/resume/{doc_id}/job-match")
-async def job_match_from_resume(doc_id: str):
-    draft_key = f"draft/{doc_id}/resume.json"
-    parsed_key = f"parsed/{doc_id}/resume.json"
+# this allows the front end deployer to connect
+from fastapi.middleware.cors import CORSMiddleware
 
-    try:
-        raw = get_object_bytes(draft_key)
-        source_key = draft_key
-    except Exception:
-        raw = get_object_bytes(parsed_key)
-        source_key = parsed_key
+def _cors_origins_from_env() -> List[str]:
+    configured = os.getenv("FRONTEND_ORIGINS", "").strip()
+    if configured:
+        origins = [o.strip().rstrip("/") for o in configured.split(",") if o.strip()]
+        if origins:
+            return origins
+    return [
+        "http://localhost:5173",
+        "http://localhost:3000",
+        "https://seamstress-m6lai.ondigitalocean.app",
+    ]
 
-    resume = Resume.model_validate(json.loads(raw.decode("utf-8", errors="replace")))
-
-    skills: List[str] = []
-    skills.extend(resume.skills.languages)
-    skills.extend(resume.skills.frameworks)
-    skills.extend(resume.skills.tools)
-    skills.extend(resume.skills.concepts)
-    for _, grouped in resume.skills.categories.items():
-        skills.extend(grouped)
-    for project in resume.projects:
-        skills.extend(project.stack)
-
-    normalized_skills: List[str] = []
-    seen = set()
-    for skill in skills:
-        cleaned = skill.strip()
-        key = cleaned.lower()
-        if cleaned and key not in seen:
-            seen.add(key)
-            normalized_skills.append(cleaned)
-
-    top_skills = normalized_skills[:12]
-    if not top_skills:
-        return {
-            "doc_id": doc_id,
-            "source_key": source_key,
-            "skills_used": [],
-            "recommended_jobs": [],
-            "message": "No skills found on resume to run company/job matching.",
-        }
-
-    companies = await search_companies_technographics(technologies=top_skills, limit=40)
-    company_names = {
-        (c.get("name") or c.get("company_name") or "").strip().lower()
-        for c in companies
-        if isinstance(c, dict) and ((c.get("name") or c.get("company_name") or "").strip())
-    }
-
-    query_terms = top_skills[:3] or ["software engineer"]
-    raw_jobs: List[Dict[str, Any]] = []
-    seen_job_ids = set()
-    for term in query_terms:
-        jobs = await search_jobs(query=term, limit=40)
-        for job in jobs:
-            job_id = str(job.get("id") or job.get("job_id") or "")
-            if job_id and job_id in seen_job_ids:
-                continue
-            if job_id:
-                seen_job_ids.add(job_id)
-            raw_jobs.append(job)
-
-    mapped = [map_job(j) for j in raw_jobs]
-
-    def _score(job: Dict[str, Any]) -> int:
-        text = f"{job.get('job_title','')} {job.get('description','') or ''}".lower()
-        score = sum(1 for skill in top_skills if skill.lower() in text)
-        if (job.get("company") or "").strip().lower() in company_names:
-            score += 4
-        return score
-
-    ranked = sorted(mapped, key=_score, reverse=True)
-    recommended_jobs = []
-    for job in ranked:
-        score = _score(job)
-        if score <= 0:
-            continue
-        recommended_jobs.append(
-            {
-                "job": job,
-                "match_score": score,
-                "recommendation": "Recommended: tailor your resume for this listing and apply.",
-            }
-        )
-        if len(recommended_jobs) >= 10:
-            break
-
-    return {
-        "doc_id": doc_id,
-        "source_key": source_key,
-        "skills_used": top_skills,
-        "matched_company_count": len(company_names),
-        "recommended_jobs": recommended_jobs,
-    }
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_origins_from_env(),
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
