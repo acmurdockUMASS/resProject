@@ -40,6 +40,7 @@ export default function App() {
 
   const [docId, setDocId] = useState(null);
   const [filename, setFilename] = useState(null);
+  const [previewUrl, setPreviewUrl] = useState("");
 
   const [messages, setMessages] = useState([
     {
@@ -351,6 +352,19 @@ export default function App() {
                     {docId && (
                       <div className="mt-1 text-[11px] text-slate-500">
                         doc id: <span className="font-mono">{docId}</span>
+                      </div>
+                    )}
+                    {previewUrl && (
+                      <div className="mt-1 text-[11px] text-slate-600">
+                        Latest export:{" "}
+                        <a
+                          href={previewUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="underline"
+                        >
+                          download zip
+                        </a>
                       </div>
                     )}
                   </div>

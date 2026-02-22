@@ -44,9 +44,9 @@ export async function exportResume(docId) {
   const resp = await fetch(`${API_BASE}/api/resume/${docId}/export`, {
     method: "POST",
   });
- const data = await safeJson(resp);
+  const data = await safeJson(resp);
   if (!resp.ok) throw new Error(data?.detail || data?.raw || "Export failed");
-  return data; 
+  return data; // { download_url, export_key, ... }
 }
 
 export async function previewResume(docId) {
