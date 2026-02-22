@@ -261,8 +261,7 @@ async def export_resume(doc_id: str):
 async def jobs_search(req: JobSearchRequest):
     raw_jobs = await search_jobs(
         query=req.role,
-        city=req.city,
-        state=req.state,
+        location=req.location,
         min_salary_usd=req.min_salary_usd,
         limit=req.limit,
     )
