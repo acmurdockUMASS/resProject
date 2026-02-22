@@ -1,10 +1,10 @@
 import { useMemo, useRef, useState } from "react";
+
 import {
   uploadResume,
   parseResume,
   chatResume,
   exportResume,
-  previewResume,
   searchJobs,
   tailorResume,
 } from "./api.js";
