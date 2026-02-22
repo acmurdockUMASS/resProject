@@ -27,7 +27,12 @@ app = FastAPI()
 
 AFFIRMATIVE_RE = re.compile(r"\b(yes|yep|yeah|yup|sure|ok|okay|please do|go ahead|sounds good|confirm)\b")
 NEGATIVE_RE = re.compile(r"\b(no|nope|nah|don't|do not|stop|cancel|never mind|nevermind)\b")
-
+NO_CHANGE_RE = re.compile(
+    r"\b(nothing|no changes|looks good|looks fine|it's fine|its fine|leave it|as is|don't change|do not change|just export|all set)\b",
+    re.IGNORECASE,
+)
+def _is_no_change(message: str) -> bool:
+    return bool(NO_CHANGE_RE.search(message.lower()))
 
 def _load_optional_json(key: str) -> Optional[Union[Dict[str, Any], List[Any]]]:
     try:
@@ -181,6 +186,29 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "assistant_message": assistant_message,
             "needs_confirmation": False,
             "status": "rejected",
+        }
+    # If user explicitly says no changes needed
+    if _is_no_change(user_message) and not pending_is_active:
+        assistant_message = (
+            "Perfect getting that ready for you!"
+        )
+
+        history.extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_message},
+            ]
+        )
+        _save_json(history_key, history)
+
+        return {
+            "doc_id": doc_id,
+            "source_key": source_key,
+            "resume": resume.model_dump(),
+            "assistant_message": assistant_message,
+            "edits_summary": [],
+            "needs_confirmation": False,
+            "status": "info",
         }
 
     try:
