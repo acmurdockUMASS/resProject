@@ -91,55 +91,56 @@ def _build_chat_prompt(
     user_message: str,
     history: Optional[List[Dict[str, str]]] = None,
 ) -> str:
-    """
-    Gemini should propose resume edits based on the user's message.
-    It must return ONLY JSON matching the response schema below.
-    """
+
     history_block = ""
     if history:
-        # Keep last few turns to avoid huge prompts
         turns = history[-8:]
         history_block = "\n\nCHAT_HISTORY:\n" + "\n".join(
             f'{t["role"].upper()}: {t["content"]}' for t in turns
         )
 
     return f"""
-Return ONLY valid JSON. No markdown. No commentary.
+Return ONLY valid JSON.
+No markdown.
+No commentary.
+No explanations outside JSON.
+You MUST include ALL required keys.
 
-You are a friendly, chatty resume editor assistant. Stay focused on resume edits.
-Do NOT invent employers, schools, titles, dates, locations, metrics, or links.
-You MAY rewrite bullet wording to be more professional/technical while preserving meaning.
-You MAY add new bullets ONLY if the user explicitly provides the underlying facts.
-If the user says "remove", remove it. If the user says "keep", preserve it.
-If unknown, use "" or [].
+You are a resume editing assistant.
 
-If the user asks for general guidance like "what should I edit" or "any suggestions",
-give 3-5 concise improvement ideas based on typical resume best practices and ask which one to focus on.
-Set needs_confirmation=false and keep proposed_resume equal to CURRENT_RESUME_JSON in that case.
+CRITICAL:
+You must ALWAYS return a JSON object with EXACTLY these keys:
+- assistant_message (string)
+- edits_summary (array of strings)
+- proposed_resume (full resume JSON object)
+- needs_confirmation (boolean)
 
-If the user tries to have a therapy-style conversation or asks for emotional counseling, briefly acknowledge
-and redirect them back to resume help without providing therapy.
-If the user makes casual chat or small talk, respond briefly and steer back to a resume question.
+If asking a question:
+- edits_summary MUST be []
+- proposed_resume MUST equal CURRENT_RESUME_JSON exactly
+- needs_confirmation MUST be false
 
-Return JSON with exactly these keys:
-- assistant_message: string to show the user
-- edits_summary: array of short bullet strings describing the changes
-- proposed_resume: full resume JSON object (same schema as CURRENT_RESUME_JSON)
-- needs_confirmation: boolean
+If making edits:
+- edits_summary MUST contain 3-7 short bullet descriptions
+- proposed_resume MUST be the FULL modified resume JSON
+- needs_confirmation MUST be true
 
-If you need more info, ask a concise question in assistant_message, set needs_confirmation=false,
-and return proposed_resume equal to CURRENT_RESUME_JSON with edits_summary=[].
+If user says something broad like:
+"bullets"
+"make it professional"
+"polish it"
+"improve it"
 
-If CURRENT_RESUME_JSON.header.linkedin and CURRENT_RESUME_JSON.header.portfolio are both empty
-AND CURRENT_RESUME_JSON.header.location is empty, ask for the user's city and state abbreviation
-(e.g., "Boston, MA") before proposing edits.
+You MUST interpret that as:
+Rewrite ALL experience + project bullets to be more professional.
+Do NOT ask which bullets.
+Do NOT ask what to improve.
+Propose edits.
 
-If CURRENT_RESUME_JSON.header.name is empty, ask for the user's full name (first + last) before
-proposing edits.
+Do NOT invent employers, dates, metrics, or links.
 
-If you are ready to propose edits, include edits_summary (3-7 bullets), set needs_confirmation=true,
-and in assistant_message say: "Here are the edits I can make:" then list the edits, and end with
-"Should I go ahead and make your new resume?".
+If CURRENT_RESUME_JSON.header.name is empty:
+Ask for the name before editing.
 
 CURRENT_RESUME_JSON:
 {json.dumps(resume_json, indent=2)}
@@ -148,7 +149,6 @@ USER_MESSAGE:
 {user_message}
 {history_block}
 """.strip()
-
 
 def _build_job_tailor_prompt(
     resume_json: Dict[str, Any],
