@@ -259,10 +259,10 @@ async def export_resume(doc_id: str):
 
 @app.post("/api/jobs/search", response_model=JobSearchResponse)
 async def jobs_search(req: JobSearchRequest):
-
     raw_jobs = await search_jobs(
         query=req.role,
-        country=req.country,
+        city=req.city,
+        state=req.state,
         min_salary_usd=req.min_salary_usd,
         limit=req.limit,
     )
