@@ -4,6 +4,7 @@ import re
 from typing import Any, Dict, List, Optional, Union
 from dotenv import load_dotenv
 from pydantic import BaseModel
+from pydantic import ValidationError
 from fastapi import FastAPI, UploadFile
 from .parse import extract_text
 from .storage import put_object, presigned_get_url, get_object_bytes
@@ -182,9 +183,35 @@ async def chat_resume(doc_id: str, req: ChatRequest):
             "status": "rejected",
         }
 
-    proposal = propose_chat_edits(resume, user_message, history)
-    assistant_message = proposal.assistant_message
+    try:
+        proposal = propose_chat_edits(resume, user_message, history)
+    except Exception as e:
+        # Never crash on user input; return a safe, judge-friendly message.
+        assistant_message = (
+            "I couldn’t process that request in edit-mode yet. "
+            "Try a specific instruction like:\n"
+            "- “Make my bullets more professional”\n"
+            "- “Rewrite my Quantiphi bullets to be more impact-focused”\n"
+            "- “Shorten my project bullets to 1 line each”"
+        )
 
+        history.extend(
+            [
+                {"role": "user", "content": user_message},
+                {"role": "assistant", "content": assistant_message},
+            ]
+        )
+        _save_json(history_key, history)
+
+        return {
+            "doc_id": doc_id,
+            "source_key": source_key,
+            "assistant_message": assistant_message,
+            "edits_summary": [],
+            "proposed_resume": resume.model_dump(),
+            "needs_confirmation": False,
+            "status": "info",
+        }
     history.extend(
         [
             {"role": "user", "content": user_message},

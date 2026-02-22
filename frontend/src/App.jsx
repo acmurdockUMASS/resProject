@@ -75,11 +75,12 @@ export default function App() {
     }
   }
 
-  function onPickFile(e) {
+    function onPickFile(e) {
     const f = e.target.files?.[0];
+    console.log("Selected file:", f);
     if (!f) return;
     handleUpload(f);
-  }
+    }
 
   function onDrop(e) {
     e.preventDefault();

@@ -4,7 +4,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
-
+from pydantic import ValidationError
 from google import genai
 from google.genai import types
 
@@ -46,7 +46,8 @@ matches this JSON schema:
     "education": [
         {{"school": "", "degree": "", "major": "", "grad": "", "gpa": "", "coursework": []}}
     ],
-    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": [], "categories":[]}}],
+    "skills": {{"languages": [], "frameworks": [], "tools": [], "concepts": [], "categories":[]}}
+    ],
     "experience": [
         {{"company": "", "location": "", "role": "", "start": "", "end": "", "bullets": []}}
     ],
@@ -252,7 +253,24 @@ def propose_chat_edits(
             text = text[4:].strip()
 
     # Validate directly
-    proposal = LLMEditProposal.model_validate_json(text)
+    try:
+        proposal = LLMEditProposal.model_validate_json(text)
+    except ValidationError:
+        try:
+            data = json.loads(text)
+            proposal = LLMEditProposal.model_validate(data)
+        except Exception:
+            # Fallback safe response
+            return LLMEditProposal(
+                assistant_message=(
+                    "I can help! Try a specific change like "
+                    "“make bullets more professional” or "
+                    "“rewrite my first experience with stronger action verbs.”"
+                ),
+                edits_summary=[],
+                proposed_resume=resume.model_dump(),
+                needs_confirmation=False,
+            )
     # Ensure proposed resume still validates against the schema
     Resume.model_validate(proposal.proposed_resume)
     return proposal
