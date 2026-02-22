@@ -132,6 +132,50 @@ USER_MESSAGE:
 """.strip()
 
 
+def _build_job_tailor_prompt(
+    resume_json: Dict[str, Any],
+    job_description: str,
+) -> str:
+    """
+    Gemini should tailor resume language to a target job description
+    while preserving factual integrity.
+    """
+    return f"""
+Return ONLY valid JSON. No markdown. No commentary.
+
+You are tailoring an existing resume JSON object to align with a job posting.
+The resume JSON schema MUST remain identical.
+
+Hard integrity rules:
+- Do NOT invent employers, schools, titles, dates, locations, links, awards, projects, or metrics.
+- Keep all existing experience factually consistent.
+- You MAY rephrase bullets to mirror the job description language and emphasize relevant accomplishments.
+- You MAY reorder bullets within an experience/project for relevance.
+- You MAY remove less relevant bullets only if enough relevant content remains for that entry.
+- If job requirements are not present in the resume, do not fabricate them.
+
+Optimization goals:
+- Match terminology from the job description where truthful (tools, domains, responsibilities).
+- Prioritize impact and relevance in experience/project bullets.
+- Keep bullet tone concise, achievement-oriented, and ATS-friendly.
+
+Return JSON with exactly these keys:
+- assistant_message: string to show the user
+- edits_summary: array of short bullet strings describing the changes
+- proposed_resume: full resume JSON object (same schema as CURRENT_RESUME_JSON)
+- needs_confirmation: boolean
+
+Always set needs_confirmation=true.
+In assistant_message say: "I tailored your resume to this job description. Here are the edits I can make:" then list the edits and end with "Should I go ahead and make your new resume?".
+
+CURRENT_RESUME_JSON:
+{json.dumps(resume_json, indent=2)}
+
+JOB_DESCRIPTION:
+{job_description}
+""".strip()
+
+
 def parse_resume_with_llm(raw_text: str, seed_resume: Dict[str, Any]) -> Resume:
     """
     Input: raw resume text
@@ -210,5 +254,45 @@ def propose_chat_edits(
     # Validate directly
     proposal = LLMEditProposal.model_validate_json(text)
     # Ensure proposed resume still validates against the schema
+    Resume.model_validate(proposal.proposed_resume)
+    return proposal
+
+
+def propose_job_tailored_edits(
+    resume: Resume,
+    job_description: str,
+) -> LLMEditProposal:
+    """
+    Input: Resume Pydantic model + raw job description text
+    Output: LLM edit proposal focused on job-tailored resume phrasing
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise RuntimeError("Missing GEMINI_API_KEY in environment (.env).")
+
+    model = os.environ.get("GEMINI_MODEL", "gemini-2.0-flash")
+
+    client = genai.Client(api_key=api_key)
+    prompt = _build_job_tailor_prompt(resume.model_dump(), job_description)
+
+    resp = client.models.generate_content(
+        model=model,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            temperature=0.2,
+            max_output_tokens=4096,
+            response_mime_type="application/json",
+        ),
+    )
+
+    text = (resp.text or "").strip()
+
+    if text.startswith("```"):
+        parts = text.split("```")
+        text = parts[1].strip() if len(parts) > 1 else text
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+
+    proposal = LLMEditProposal.model_validate_json(text)
     Resume.model_validate(proposal.proposed_resume)
     return proposal
