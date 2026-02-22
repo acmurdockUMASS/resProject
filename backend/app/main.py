@@ -307,7 +307,7 @@ async def jobs_search(req: JobSearchRequest):
             apply_url=j.get("apply_url"),
             description=j.get("description"),
             date_posted=j.get("date_posted"),
-        )
+        )   
         for j in mapped
     ]
 
